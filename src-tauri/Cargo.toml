@@ -1,0 +1,51 @@
+[package]
+name = "ai-session-hub"
+version = "0.1.0"
+description = "Hoku: a local-first macOS app that indexes Claude Code, Codex, and Claude Desktop sessions read-only"
+authors = ["João Afonso"]
+license = "MIT"
+repository = "https://github.com/joao-afonso-p/hoku"
+homepage = "https://github.com/joao-afonso-p/hoku"
+readme = "../README.md"
+edition = "2021"
+publish = false
+
+[lib]
+name = "ai_session_hub_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+# The executable is "Hoku", so macOS shows that name in the Dock even for unbundled dev
+# builds (`tauri dev`), not just in Hoku.app. Internal crate names are unchanged.
+[[bin]]
+name = "Hoku"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["macos-private-api"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.37", features = ["bundled"] }
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+regex = "1"
+libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSData", "NSDictionary", "NSEnumerator", "NSError", "NSString", "NSValue"] }
+objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSBitmapImageRep", "NSGraphics", "NSImage", "NSImageRep", "NSResponder", "NSRunningApplication"] }
+objc2-web-kit = { version = "0.3", features = ["WKWebView", "WKSnapshotConfiguration", "block2", "objc2-app-kit"] }
+block2 = "0.6"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true

@@ -1,0 +1,357 @@
+@import "tailwindcss";
+
+/*
+  Visual language: graphite, starlight, restraint.
+  Colour is rare and meaningful; hierarchy comes from luminance and typography.
+*/
+@theme {
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;
+  --font-mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, monospace;
+
+  --color-void: #0a0b0e;
+  --color-ground: #0d0e12;
+  --color-raised: #13151a;
+  --color-panel: #15171c;
+  --color-hover: #1b1e24;
+  --color-line: rgb(255 255 255 / 0.065);
+  --color-line-strong: rgb(255 255 255 / 0.11);
+
+  --color-ink: #e8e9eb;
+  --color-ink-2: #a9adb5;
+  --color-ink-3: #71767f;
+  --color-ink-4: #4b4f57;
+
+  /* Starlight: selection, focus, "alive". Warm white, never neon. */
+  --color-star: #f1ead8;
+  --color-star-dim: #b9b3a3;
+  --color-waiting: #d8c08a;
+  --color-danger: #e0907f;
+  --color-ok: #a9c7a1;
+
+  --color-p-claude-code: #e2b27c;
+  --color-p-claude: #dc9a7f;
+  --color-p-codex: #9fb4ea;
+
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+    background: var(--color-void);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: default;
+  }
+  input,
+  textarea,
+  select {
+    user-select: text;
+    -webkit-user-select: text;
+  }
+  ::selection {
+    background: rgb(241 234 216 / 0.22);
+  }
+  button {
+    cursor: default;
+  }
+  :focus-visible {
+    outline: 1px solid rgb(241 234 216 / 0.45);
+    outline-offset: 2px;
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(255 255 255 / 0.1) transparent;
+  }
+}
+
+@layer components {
+  .eyebrow {
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-ink-3);
+  }
+  .field {
+    width: 100%;
+    background: rgb(255 255 255 / 0.035);
+    border: 1px solid var(--color-line);
+    border-radius: 7px;
+    padding: 7px 10px;
+    color: var(--color-ink);
+    font-size: 13px;
+    transition: border-color 120ms, background 120ms;
+  }
+  .field::placeholder {
+    color: var(--color-ink-4);
+  }
+  .field:focus {
+    outline: none;
+    border-color: rgb(241 234 216 / 0.28);
+    background: rgb(255 255 255 / 0.05);
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 11px;
+    border-radius: 7px;
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--color-ink-2);
+    background: rgb(255 255 255 / 0.04);
+    border: 1px solid var(--color-line);
+    transition: background 120ms, color 120ms, border-color 120ms;
+    white-space: nowrap;
+  }
+  .btn:hover {
+    color: var(--color-ink);
+    background: rgb(255 255 255 / 0.07);
+  }
+  .btn:active {
+    background: rgb(255 255 255 / 0.1);
+  }
+  .btn:disabled {
+    opacity: 0.4;
+    pointer-events: none;
+  }
+  .btn-primary {
+    color: #16140f;
+    background: var(--color-star);
+    border-color: transparent;
+    transition: background 120ms, box-shadow 160ms, color 120ms;
+  }
+  /* The main action should visibly answer the pointer: brighter, with a soft starlight ring. */
+  .btn-primary:hover {
+    color: #0d0c09;
+    background: #fffaee;
+    box-shadow:
+      0 0 0 1px rgb(241 234 216 / 0.35),
+      0 0 18px -2px rgb(241 234 216 / 0.45);
+  }
+  .btn-primary:active {
+    background: #e6dfcc;
+    box-shadow: none;
+  }
+  .btn-primary .nudge {
+    transition: transform 160ms var(--ease-out-soft);
+  }
+  .btn-primary:hover .nudge {
+    transform: translate(1.5px, -1.5px);
+  }
+  .btn-ghost {
+    background: transparent;
+    border-color: transparent;
+  }
+  .btn-ghost:hover {
+    background: rgb(255 255 255 / 0.05);
+  }
+  .kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 17px;
+    height: 17px;
+    padding: 0 4px;
+    border-radius: 4px;
+    font-size: 10.5px;
+    font-family: var(--font-sans);
+    color: var(--color-ink-3);
+    background: rgb(255 255 255 / 0.05);
+    border: 1px solid var(--color-line);
+  }
+  .panel {
+    background: var(--color-panel);
+    border: 1px solid var(--color-line);
+    box-shadow:
+      0 0 0 1px rgb(0 0 0 / 0.4),
+      0 24px 60px -12px rgb(0 0 0 / 0.6);
+  }
+  .meta-row {
+    display: grid;
+    grid-template-columns: 92px 1fr;
+    gap: 10px;
+    align-items: baseline;
+    padding: 5px 0;
+  }
+  .meta-row dt {
+    color: var(--color-ink-3);
+    font-size: 12px;
+  }
+  .meta-row dd {
+    color: var(--color-ink-2);
+    font-size: 12.5px;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+}
+
+/* ───── constellation ───── */
+
+.sky-label {
+  font-family: var(--font-sans);
+  paint-order: stroke;
+  stroke: var(--color-void);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
+/*
+  Semantic motion. Only Working loops, slowly; everything else plays once when a state
+  changes (see features/constellation/motion.ts). Ambient background motion is separate
+  (Starfield) and can be switched off; these can't, except by reduced motion.
+*/
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.2;
+    transform: scale(0.96);
+  }
+  50% {
+    opacity: 0.42;
+    transform: scale(1.04);
+  }
+}
+.breathe {
+  animation: breathe 4.8s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+/* A project with working sessions: weaker and slower than the sessions themselves. */
+@keyframes breathe-core {
+  0%,
+  100% {
+    opacity: 0.14;
+  }
+  50% {
+    opacity: 0.34;
+  }
+}
+.breathe-core {
+  animation: breathe-core 6.4s ease-in-out infinite;
+}
+/* One soft ring outward when a session changes state. */
+@keyframes ripple {
+  from {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(2.6);
+  }
+}
+.ripple {
+  animation: ripple 1100ms var(--ease-out-soft) both;
+  transform-box: fill-box;
+  transform-origin: center;
+  pointer-events: none;
+}
+/* Into Needs You: a slight swell and back, no bounce; the amber fades in and stays. */
+@keyframes attention-in {
+  0% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(1.1);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+.attention-in {
+  animation: attention-in 320ms ease-out;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+@keyframes halo-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.halo-in {
+  animation: halo-in 520ms ease-out both;
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.fade-up {
+  animation: fade-up 160ms var(--ease-out-soft) both;
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.fade-in {
+  animation: fade-in 140ms ease-out both;
+}
+@keyframes slide-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.slide-in-right {
+  animation: slide-in-right 200ms var(--ease-out-soft) both;
+}
+@keyframes slide-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.slide-in-left {
+  animation: slide-in-left 200ms var(--ease-out-soft) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* State stays clear from colour and shape alone; transitions become a short fade. */
+  .ripple {
+    display: none;
+  }
+  .halo-in {
+    animation-duration: 160ms;
+  }
+  .attention-in,
+  .breathe-core,
+  .breathe,
+  .fade-up,
+  .fade-in,
+  .slide-in-right,
+  .slide-in-left {
+    animation: none;
+  }
+}

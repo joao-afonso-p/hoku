@@ -1,0 +1,92 @@
+name: Provider integration
+description: Propose a new provider, or a change to how an existing one is discovered, observed or opened.
+labels: ["provider"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Hoku integrations follow strict rules (see [CONTRIBUTING.md](https://github.com/joao-afonso-p/hoku/blob/main/CONTRIBUTING.md#non-negotiable-rules)):
+        - Provider data is **read-only**. Nothing in the provider's store may ever be written, locked or migrated.
+        - **No credentials or tokens** are ever read. Account state comes only from an official status command.
+        - Only a **title and a ≤200-character preview** are indexed, never full transcripts.
+        - No network access.
+
+        **Redact everything below.** Use made-up ids, titles and paths (`/Users/me/...`) and no emails.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind of request
+      options:
+        - New provider
+        - New source for an existing provider
+        - Change to an existing integration
+    validations:
+      required: true
+  - type: input
+    id: provider
+    attributes:
+      label: Provider / app / tool
+      description: Name and the version(s) you inspected.
+      placeholder: "ExampleAgent Desktop 1.4.2 / example-cli 0.9"
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: What would this enable?
+    validations:
+      required: true
+  - type: textarea
+    id: location
+    attributes:
+      label: Where does the session data live?
+      description: Paths (with the username redacted), file formats (JSONL, SQLite, JSON, LevelDB, ...), and whether it's local or server-side. List any credential files you saw so they can be avoided, but don't open them.
+      placeholder: |
+        ~/Library/Application Support/ExampleAgent/sessions/<uuid>.json  (one JSON per session)
+        ~/.example/state.sqlite  (SQLite, WAL)
+        Credentials: ~/.example/auth.json  (not opened)
+    validations:
+      required: true
+  - type: textarea
+    id: readonly
+    attributes:
+      label: Read-only access method
+      description: How can Hoku read it without writing anything? For example SQLite opened with SQLITE_OPEN_READ_ONLY + query_only, plain file reads, or an official CLI command that only prints. Note any locks, WAL behaviour, or files that change while the app is running.
+    validations:
+      required: true
+  - type: textarea
+    id: live
+    attributes:
+      label: Live-state signals
+      description: What can tell whether a session is working, needs input (permission/question), ready, idle, offline or errored? Process checks, registry files, log/rollout tails, mtimes, etc. Say how reliable each signal is. "None" is a fine answer.
+  - type: textarea
+    id: launch
+    attributes:
+      label: Deep link / launch method
+      description: How can a session be reopened in its native tool? A documented URL scheme, a CLI flag (`--resume <id>`), etc. How did you verify it? What does the id look like (charset and length)?
+    validations:
+      required: true
+  - type: textarea
+    id: account
+    attributes:
+      label: Account / sign-in status (optional)
+      description: Is there an official command that prints sign-in status without secrets? Which non-secret fields does it show?
+  - type: textarea
+    id: schema
+    attributes:
+      label: Sample redacted schema
+      description: A minimal, **synthetic** example of the data (table columns, JSON keys) with made-up values. This becomes the basis for test fixtures.
+      render: text
+      placeholder: |
+        CREATE TABLE threads (id TEXT PRIMARY KEY, title TEXT, cwd TEXT, updated_at INTEGER, archived INTEGER);
+        {"sessionId": "local_00000000-0000-0000-0000-000000000000", "title": "Example", "lastActivityAt": 1700000000000}
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: The proposed access never writes to the provider's store and never reads credentials.
+          required: true
+        - label: Everything above is redacted or synthetic (no real titles, prompts, emails, ids or usernames).
+          required: true
+        - label: I'm willing to open a PR for this.

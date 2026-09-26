@@ -1,0 +1,50 @@
+name: Platform support (Linux / Windows)
+description: Register interest in, or discuss, running Hoku somewhere other than macOS.
+labels: ["platform"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Hoku currently supports macOS only.** Linux and Windows builds aren't supported, tested or expected to work today. This template collects interest and design discussion. It isn't for reporting that Hoku fails on another OS.
+
+        The macOS-specific pieces a port would have to replace:
+        - **AppKit via `objc2`** (`src-tauri/src/launch.rs`): `NSApplication` activation yielding, `NSRunningApplication` to bring terminals forward, and CoreGraphics `CGWindowListCopyWindowInfo` to detect which desktop (Space) a window is on.
+        - **AppleScript via `/usr/bin/osascript`**: driving **iTerm** and **Terminal.app** to find a tab by tty, open tabs/windows, and run `claude --resume` / `claude attach`.
+        - **macOS commands**: `/usr/bin/open` (deep links, `open -b`, Finder reveal), `pbcopy`, `defaults` (Spaces setting, app versions from `Info.plist`), `pgrep` and `ps` (process and tty discovery).
+        - **macOS paths**: `~/Library/Application Support/...` (Hoku's index and Claude Desktop data), and `/Applications/*.app` for detecting Claude, ChatGPT/Codex and iTerm.
+        - **Tauri config**: `macOSPrivateApi`, an overlay title bar, and bundling only as a `.app`. `devtools.rs` (debug only) uses `WKWebView` snapshots. `scripts/install-local.sh` uses `lsregister` and `ditto`.
+        - **Provider layout**: the Claude Desktop and Codex Desktop data locations and deep-link handlers are only known on macOS.
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Linux
+        - Windows
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: distro
+    attributes:
+      label: OS / distribution and version
+      placeholder: "Ubuntu 24.04 / Windows 11 24H2"
+  - type: textarea
+    id: usecase
+    attributes:
+      label: Which providers and terminal would you use there?
+      description: For example Claude Code in GNOME Terminal or Windows Terminal, or Codex CLI. Where does their data live on your OS (redact your username)?
+    validations:
+      required: true
+  - type: textarea
+    id: approach
+    attributes:
+      label: Proposed approach (optional)
+      description: How would you replace the macOS-specific pieces above? Would you contribute and maintain it?
+  - type: checkboxes
+    id: understand
+    attributes:
+      label: Acknowledgement
+      options:
+        - label: I understand non-macOS platforms are currently unsupported and this issue is for discussion.
+          required: true

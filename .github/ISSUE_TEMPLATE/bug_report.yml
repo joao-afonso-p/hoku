@@ -1,0 +1,96 @@
+name: Bug report
+description: Something in Hoku doesn't work as expected.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. **Please redact before posting.** Hoku works with personal data, so don't paste real session titles, prompts, transcript excerpts, account emails, session/thread ids, or paths containing your username (use `/Users/me/...`). Screenshots should use demo data (Settings → Load demo) where possible.
+
+        Security problems (for example Hoku writing to provider data, reading credentials, or injection in launch paths) must **not** be reported here. Use [private vulnerability reporting](https://github.com/joao-afonso-p/hoku/security/advisories/new) instead.
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      description: Apple menu → About This Mac. Include the chip (Apple Silicon or Intel).
+      placeholder: "macOS 26.1, Apple Silicon"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Hoku version or commit
+      description: The release version, or the output of `git rev-parse --short HEAD` if you built from source.
+      placeholder: "0.1.0 / abc1234"
+    validations:
+      required: true
+  - type: dropdown
+    id: providers
+    attributes:
+      label: Provider(s) involved
+      multiple: true
+      options:
+        - Claude Code
+        - Codex Desktop
+        - Claude Desktop (Cowork)
+        - Claude Desktop (chats, added manually)
+        - None / not provider-specific
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - Scan / discovery
+        - Runtime state (working, needs you, ready, ...)
+        - Opening / Go to terminal
+        - Galaxy / constellation
+        - Command palette (⌘K)
+        - Sessions / Projects / Activity views
+        - Integrations / accounts
+        - Build / install (pnpm tauri dev, install:local)
+        - Other
+  - type: input
+    id: terminal
+    attributes:
+      label: Terminal and provider versions (if relevant)
+      placeholder: "iTerm 3.6 · claude 2.1.x · Codex app 26.x"
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: Include the error message Hoku showed, if any.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted logs or output
+      description: |
+        Terminal output from `pnpm tauri dev`, error details, etc. **Redact** titles, prompts, emails, ids and usernames. Output from `cargo test probe_this_mac` contains your real session titles, so summarize it rather than pasting it.
+      render: text
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I removed real session titles, prompts, emails, ids and usernames from this report.
+          required: true

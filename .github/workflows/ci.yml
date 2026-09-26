@@ -1,0 +1,115 @@
+# Continuous integration for Hoku.
+#
+# Platform support: Hoku is a macOS-only app (it links AppKit/WebKit via objc2 and
+# uses Tauri's macos-private-api). There are intentionally NO Linux or Windows
+# build/test jobs. Ubuntu runners are used only for platform-independent checks
+# (frontend typecheck/tests/build and `cargo fmt`); everything that compiles the
+# Rust crate runs on macOS.
+#
+# This workflow only verifies the code. It does not sign, notarize, publish, or
+# upload any release artifacts.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  frontend:
+    name: Frontend (typecheck, test, build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      # pnpm version comes from the `packageManager` field in package.json.
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+
+  rust-fmt:
+    name: Rust formatting
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: cargo fmt --check
+        working-directory: src-tauri
+        run: cargo fmt --check
+
+  macos:
+    name: Rust tests + Tauri build (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # Tests marked #[ignore] (e.g. `probe_this_mac`, which reads the real
+      # machine's data) stay ignored here on purpose.
+      - name: cargo test
+        working-directory: src-tauri
+        run: cargo test --locked
+
+      # Non-blocking for now: the codebase has a handful of outstanding clippy
+      # lints (type_complexity, too_many_arguments, manual_is_multiple_of, ...).
+      # Drop `continue-on-error` once `cargo clippy --all-targets -- -D warnings`
+      # is clean.
+      - name: cargo clippy (non-blocking)
+        working-directory: src-tauri
+        continue-on-error: true
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      # The Tauri build runs `beforeBuildCommand` (`pnpm build`), so the
+      # frontend toolchain is needed in this job too.
+      # pnpm version comes from the `packageManager` field in package.json.
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Unsigned debug build of Hoku.app: proves the frontend + Rust app compile
+      # and bundle together. `--debug` is used deliberately: the release profile
+      # (lto = true, codegen-units = 1) is much slower and adds little signal
+      # for CI, while the debug build reuses the dependencies already compiled
+      # by `cargo test`. No signing identity is configured, so nothing is
+      # signed or notarized, and the bundle is not uploaded.
+      - name: Tauri build (debug, unsigned .app)
+        run: pnpm tauri build --debug --bundles app --ci
