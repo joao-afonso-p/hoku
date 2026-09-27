@@ -35,6 +35,21 @@ The [script](scripts/install.sh) downloads the latest DMG, checks its SHA-256, i
 `/Applications/Hoku.app` (quitting and replacing an older copy), and opens it. Your index in
 `~/Library/Application Support/com.hoku.app` is never touched.
 
+**To update,** run the same command again whenever a new version is released. If Hoku is
+running, the script quits it, swaps in the new version and reopens it.
+
+**Options** go after `bash -s --`, for example:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/joao-afonso-p/hoku/main/scripts/install.sh | bash -s -- --version v0.1.0
+```
+
+| Option | Effect |
+|---|---|
+| `--version vX.Y.Z` | Install that release instead of the latest |
+| `--dir ~/Applications` | Install for your user only, if you can't write to `/Applications` (the folder must exist) |
+| `--no-open` | Don't open Hoku after installing |
+
 **Or by hand:** download `Hoku_<version>_aarch64.dmg` from the latest release, open it, and drag
 Hoku to Applications. Hoku is free and isn't notarized by Apple, so the first time you open it
 macOS says it can't verify it. Click **Done**, then go to **System Settings → Privacy & Security**
