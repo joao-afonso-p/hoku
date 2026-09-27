@@ -619,4 +619,79 @@ mod tests {
         assert_eq!(s.runtime.state, RuntimeState::Ready);
         assert_eq!(s.runtime.source.as_deref(), Some("fake"));
     }
+
+    /// An approval is persisted as needs_input with action required, survives unchanged ticks
+    /// and the watchdog, and leaving it is persisted and announced as "resumed".
+    #[test]
+    fn needs_input_is_persisted_and_left_cleanly() {
+        let conn = open_in_memory();
+        let d = DiscoveredSession {
+            external_id: "t1".into(),
+            title: "Release".into(),
+            ..Default::default()
+        };
+        upsert_discovered(&conn, Provider::Codex, "fake", &d, None, None).unwrap();
+        conn.execute(
+            "UPDATE sessions SET created_at = '2026-01-01T00:00:00.000Z'",
+            [],
+        )
+        .unwrap();
+        let db = StdMutex::new(conn);
+        let next = Arc::new(StdMutex::new(Some(
+            Observation::new(RuntimeState::Working, Confidence::Medium, "fake")
+                .activity(Some(at(0))),
+        )));
+        let adapters: Vec<Box<dyn SessionAdapter>> = vec![Box::new(Fake(next.clone()))];
+        let mut st = MonitorState::default();
+        let stored = |db: &StdMutex<Connection>| {
+            db::list_sessions(&db.lock().unwrap())
+                .unwrap()
+                .remove(0)
+                .runtime
+        };
+        tick(&db, &adapters, &mut st);
+        assert_eq!(stored(&db).state, RuntimeState::Working);
+
+        // Waiting an hour: no activity, but needs_input has no watchdog.
+        *next.lock().unwrap() = Some(
+            Observation::new(RuntimeState::NeedsInput, Confidence::Medium, "fake")
+                .reason("Waiting for approval")
+                .detail(Some("Allow creating the pull request?".into()))
+                .since(Some(at(60))),
+        );
+        let o = tick(&db, &adapters, &mut st);
+        assert!(o.changed);
+        assert_eq!(
+            (o.transitions[0].to, o.transitions[0].event.as_deref()),
+            (RuntimeState::NeedsInput, Some("needs_input"))
+        );
+        let rt = stored(&db);
+        assert_eq!(
+            (rt.state, rt.action_required, rt.detail.as_deref()),
+            (
+                RuntimeState::NeedsInput,
+                true,
+                Some("Allow creating the pull request?")
+            )
+        );
+        assert!(!tick(&db, &adapters, &mut st).changed);
+        assert_eq!(stored(&db).state, RuntimeState::NeedsInput);
+
+        // Approved: the command runs.
+        *next.lock().unwrap() = Some(
+            Observation::new(RuntimeState::Working, Confidence::Medium, "fake")
+                .activity(Some(at(0))),
+        );
+        let o = tick(&db, &adapters, &mut st);
+        assert_eq!(
+            (o.transitions[0].from, o.transitions[0].to),
+            (RuntimeState::NeedsInput, RuntimeState::Working)
+        );
+        assert_eq!(o.transitions[0].event.as_deref(), Some("resumed"));
+        let rt = stored(&db);
+        assert_eq!(
+            (rt.state, rt.action_required),
+            (RuntimeState::Working, false)
+        );
+    }
 }

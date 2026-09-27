@@ -112,8 +112,9 @@ Account state comes from `claude auth status` (email, org, plan) and `codex logi
   and that choice sticks.
 - The Cowork deep link is verified in Claude Desktop's code and accepted without warnings,
   but it's an undocumented route.
-- Codex doesn't persist approval *requests*. Hoku infers them from escalated commands still
-  pending, and marks them "Likely". Cowork and Claude chats expose no turn state, so they
+- Codex doesn't persist approval *requests*. Hoku infers them from calls still pending
+  (escalated commands, permission requests, questions, any command under `untrusted`), and
+  marks them as inferred. See docs/runtime-state.md. Cowork and Claude chats expose no turn state, so they
   never appear in Needs You.
 
 ## Running
