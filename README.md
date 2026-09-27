@@ -72,7 +72,7 @@ download.
 | **Project Focus** | Click a project to zoom in. Hover for metadata, click to inspect, double-click to open. |
 | **Inactive projects** | Stay on the map, very faint, so their place stays familiar. *Settings → Hide inactive projects* removes them without moving the others. |
 | **Archive a project** | From its edit sheet or the Projects drawer. It leaves the Galaxy, keeps its sessions, root and position, and stays searchable. Restore it from Projects → Archived. *Delete* instead removes the project and moves its sessions to Unsorted. |
-| **Go to terminal** | The one action for Claude Code. At click time Hoku checks live state and switches to the tab it's running in, attaches to a background session, or resumes it in a new tab of your frontmost iTerm window. It never starts a second copy of a live session. |
+| **Go to terminal** | The one action for Claude Code. At click time Hoku checks live state and switches to the tab it's running in (or to VS Code, when it runs in VS Code's terminal), attaches to a background session, or resumes it in a new tab of your frontmost iTerm window. It never starts a second copy of a live session. |
 | **Galaxy ambience** | *Settings → Galaxy ambience*: `Subtle motion` (default: the background drifts imperceptibly and follows the cursor a little) or `Still`. Runtime animations are separate and always shown, unless macOS reduced motion is on. |
 | **⌘K** | Search **all** sessions (including ones hidden from Current or by a filter), projects and actions. `↵` opens, `⌘↵` shows on map, `⌥↵` filters the Galaxy to its state, `⌘P` goes to its project, `⌘D` favorites, `⌘C` copies the ID. |
 | **Activity** | Cross-provider timeline of what started, finished, needed you or failed (Today / 7d / 30d). |
@@ -87,7 +87,7 @@ download.
 
 | Provider | Discovery | Live state | Opening |
 |---|---|---|---|
-| **Claude Code** | Transcripts in `~/.claude/projects` plus the live-session registry `~/.claude/sessions` | **Full**: the registry's own busy / waiting (permission, question, dialog) / idle, plus transcript tail | **Go to terminal**, decided live. Running in a terminal → **switches to that iTerm/Terminal tab** (bringing its window to this desktop if needed). Background → switches to a tab already attached, or `claude attach <id>` in a new tab. Otherwise → `claude --resume <id>` in the session's folder, in a new tab of the frontmost iTerm window on this desktop. Terminal.app gets a window, since it can't open tabs without Accessibility access. |
+| **Claude Code** | Transcripts in `~/.claude/projects` plus the live-session registry `~/.claude/sessions` | **Full**: the registry's own busy / waiting (permission, question, dialog) / idle, plus transcript tail | **Go to terminal**, decided live. Running in a terminal → **switches to that iTerm/Terminal tab** (bringing its window to this desktop if needed). Running in VS Code (or VS Code Insiders) → **brings VS Code forward**. Background → switches to a tab already attached, or `claude attach <id>` in a new tab. Otherwise → `claude --resume <id>` in the session's folder, in a new tab of the frontmost iTerm window on this desktop. Terminal.app gets a window, since it can't open tabs without Accessibility access. |
 | **Codex Desktop** | Thread index `~/.codex/state_*.sqlite` (read-only). Archived threads, automation runs and sub-agents are skipped. Codex projects become project suggestions. | **Partial**: inferred from rollouts; approvals from pending escalated commands | `codex://threads/<id>`, verified against Codex's own logs |
 | **Claude Desktop, Cowork** | Local session metadata in `~/Library/Application Support/Claude/local-agent-mode-sessions` | **Limited**: app running + metadata changes only | `claude://claude.ai/local_sessions/<id>` |
 | **Claude Desktop, chats** | **Manual only.** Chats are stored server-side, and scraping the app's cache isn't safe. | **None** | `claude://claude.ai/chat/<uuid>`. Paste the web URL, a `claude://` link or a bare ID. |
@@ -103,6 +103,9 @@ Account state comes from `claude auth status` (email, org, plan) and `codex logi
   disk", and resume is disabled for them.
 - Focusing a running Claude Code terminal needs macOS Automation permission for iTerm or
   Terminal (asked once).
+- In VS Code, Hoku brings VS Code forward but can't select the exact integrated-terminal tab
+  or window: VS Code has no API for that outside the app. Warp, tmux and other hosts aren't
+  switched to at all; Hoku says where the session runs instead of starting a second copy.
 - A Codex account's email isn't readable without opening its credential file, which the app
   doesn't do. The Codex account shows as "Connected externally".
 - One root folder per project. Sessions elsewhere can be dragged in or reassigned by hand,

@@ -85,8 +85,14 @@ directly is faster and needs no subprocess.
 - Scan transcripts and registry, both read-only.
 - Open:
   1. Live background session: `claude attach <jobId>` in a new terminal window.
-  2. Live interactive session: focus its existing iTerm2/Terminal tab by TTY. If that fails,
-     explain and offer resume.
+  2. Live interactive session: find its host by walking the process tree (one `ps -axo
+     pid=,ppid=,comm=` snapshot). iTerm2/Terminal: focus the existing tab by TTY. VS Code
+     (`com.microsoft.VSCode`) or VS Code Insiders (`com.microsoft.VSCodeInsiders`),
+     recognised by the app bundle path or its `Code Helper` processes (the integrated
+     terminal's pty host, or the extension host for extension-launched sessions): activate
+     the app. VS Code exposes no way to select a terminal tab from outside, so the exact tab
+     isn't selected. Forks (Cursor, VSCodium, Windsurf) and other Electron apps don't match.
+     Anything else (Warp, tmux): explain, never start a second copy.
   3. Anything else: `cd <cwd> && claude --resume <id>` in a new terminal window.
 - Runtime: the registry's `status` / `waitingFor` / `statusUpdatedAt` plus the transcript
   tail. See [runtime-state.md](runtime-state.md). Verified: a background session
@@ -224,6 +230,11 @@ It is not used; Claude Code sessions open in a terminal instead.
 - Claude Desktop chat titles: server-side only. Titles come from the user on manual add.
 - Focusing an interactive Claude Code terminal depends on the user granting Automation
   permission to Hoku for iTerm2/Terminal.
+- VS Code: only the app is activated. Selecting the right window or integrated-terminal tab
+  would need Accessibility access or reading another process's environment, which Hoku
+  doesn't do. With macOS's "switch to a Space with open windows" setting off, a VS Code
+  window on another desktop can't be moved here (no scriptable window list), so Hoku shows
+  the Spaces hint instead.
 
 ## 7. Security implications
 
