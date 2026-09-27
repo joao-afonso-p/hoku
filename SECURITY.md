@@ -70,6 +70,11 @@ you're credited in the advisory unless you'd rather not be.
 - **macOS Automation permission.** Switching to or opening a Claude Code terminal uses
   AppleScript to control iTerm or Terminal. macOS asks for Automation permission once,
   and you can revoke it in System Settings → Privacy & Security → Automation.
+- **Releases.** Release builds are ad-hoc signed and not notarized by Apple (Hoku isn't in
+  the paid Apple Developer Program). Each release publishes `SHA256SUMS.txt` and a GitHub
+  build provenance attestation (`gh attestation verify <dmg> --repo joao-afonso-p/hoku`).
+  `scripts/install.sh` checks the checksum before installing. See
+  [docs/releasing.md](docs/releasing.md).
 - **Debug-only devtools.** Debug builds open a localhost control socket
   (`src-tauri/src/devtools.rs`) that is compiled out of release builds. It is
   unauthenticated, so any local process can drive a running dev build.
@@ -87,6 +92,9 @@ you're credited in the advisory unless you'd rather not be.
 - CSP bypasses, script injection into the webview, or misuse of the IPC commands
 - The devtools socket being reachable in a release build or from off-host
 - `scripts/install-local.sh` touching user data it shouldn't
+- The release workflow (`.github/workflows/release.yml`) publishing artifacts that weren't
+  built and verified by it, or `scripts/install.sh` installing something other than the
+  checksum-verified release, or touching user data
 
 ## Out of scope
 

@@ -18,8 +18,32 @@ sessions, runtime state and attention flow stay searchable and manageable.
 ![Hoku Sessions view](docs/images/sessions.png)
 
 **Platform:** macOS only (developed on Apple Silicon). Linux and Windows are not supported:
-opening sessions relies on AppleScript, iTerm/Terminal and macOS app bundles. Hoku is pre-1.0
-and there are no signed release builds yet, so you build it from source.
+opening sessions relies on AppleScript, iTerm/Terminal and macOS app bundles. Hoku is pre-1.0.
+Releases are built for Apple Silicon Macs; on an Intel Mac, [build it from source](#running).
+
+## Installing
+
+Hoku is published on [GitHub Releases](https://github.com/joao-afonso-p/hoku/releases). Install
+it once and it stays in Applications like any other app. To install, or to update to the
+latest release, run this in Terminal:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/joao-afonso-p/hoku/main/scripts/install.sh | bash
+```
+
+The [script](scripts/install.sh) downloads the latest DMG, checks its SHA-256, installs
+`/Applications/Hoku.app` (quitting and replacing an older copy), and opens it. Your index in
+`~/Library/Application Support/com.hoku.app` is never touched.
+
+**Or by hand:** download `Hoku_<version>_aarch64.dmg` from the latest release, open it, and drag
+Hoku to Applications. Hoku is free and isn't notarized by Apple, so the first time you open it
+macOS says it can't verify it. Click **Done**, then go to **System Settings → Privacy & Security**
+and click **Open Anyway**. You do this once per version.
+
+To update by hand, quit Hoku and drag the new version over the old one. After an update macOS
+may ask once more for permission to control iTerm or Terminal. See
+[docs/releasing.md](docs/releasing.md) for what the release builds are and how to verify a
+download.
 
 ## Local-first
 
@@ -154,6 +178,8 @@ UI. The app is named **Hoku** everywhere: `productName`, the `Hoku` executable
   stability guarantees
 - [docs/provider-discovery.md](docs/provider-discovery.md): where each provider stores its data
   and why each integration works the way it does
+- [docs/releasing.md](docs/releasing.md): how releases are built, installed, verified and
+  tested on a clean machine
 
 ## Contributing
 

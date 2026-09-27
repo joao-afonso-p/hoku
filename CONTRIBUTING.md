@@ -284,6 +284,9 @@ There are also `#[ignore]`d manual probes. They're optional and not part of CI:
   demo), not your real sessions.
 - Fill in the PR template checklist, including the macOS version you tested on.
 
+Releases are cut by the maintainer from `v*` tags on `main`. A GitHub Actions workflow builds
+the DMG and drafts the GitHub Release. See [docs/releasing.md](docs/releasing.md).
+
 ## Privacy in issues, PRs and fixtures
 
 Hoku handles personal work data. In anything you post or commit, never include:
