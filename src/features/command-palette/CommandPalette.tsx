@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { closeOverlay, copy, focusProject, openOverlay, openSession, quickFilter, revealSession, scan, setStatusFilter, showSessions, toggleFavorite, toggleList } from "../../app/actions";
+import { closeOverlay, copy, focusProject, openOverlay, openSession, quickFilter, revealSession, scan, setStatusFilter, showSessions, toggleFavorite, toggleFollowUp, toggleList } from "../../app/actions";
 import { UNSORTED } from "../../app/model";
 import { useHub } from "../../app/store";
 import { basename } from "../../lib/paths";
@@ -7,7 +7,7 @@ import { relativeTime } from "../../lib/time";
 import type { Project, Session } from "../../lib/types";
 import { PROVIDERS, surfaceLabel } from "../../providers";
 import { GlyphIcon } from "../constellation/Glyph";
-import { IconSearch } from "../../components/Icons";
+import { IconFlagFilled, IconSearch } from "../../components/Icons";
 import { search, type SearchDoc } from "./search";
 import { isActive, needsYou, reasonText, STATUS, stateSince, statusKey } from "../runtime/status";
 import { StatusDot } from "../runtime/StatusMark";
@@ -23,6 +23,7 @@ const ACTIONS: Omit<Extract<Item, { kind: "action" }>, "kind">[] = [
   { id: "a:add-project", label: "Add project", keywords: "new project create", run: () => openOverlay({ kind: "project" }) },
   { id: "a:integrations", label: "Open Integrations", keywords: "integrations providers accounts status connect", run: () => openOverlay({ kind: "integrations" }) },
   { id: "a:needs", label: "Show Needs You", hint: "Sessions waiting on you", keywords: "needs you inbox waiting permission approval question attention", run: () => toggleList("needs") },
+  { id: "a:follow", label: "Show Follow up", hint: "Sessions you want to review later", keywords: "follow up review later reminder snooze queue todo due overdue", run: () => toggleList("follow") },
   { id: "a:activity", label: "Show Activity", hint: "Cross-provider timeline", keywords: "activity timeline recent history events finished", run: () => toggleList("activity") },
   { id: "a:sessions", label: "Show Sessions", hint: "Sortable, filterable list", keywords: "sessions list table manage filter", run: () => showSessions() },
   { id: "a:filter-needs", label: "Filter Galaxy: Needs You", keywords: "filter galaxy needs you waiting status", run: () => quickFilter("needs_you") },
@@ -62,6 +63,7 @@ export function CommandPalette() {
           { text: String(s.metadata?.firstPrompt ?? ""), weight: 0.35 },
           // Lets "working" or "needs you" find sessions in that state.
           { text: `${STATUS[statusKey(s)].label} ${s.runtime.reason ?? ""}`, weight: 0.5 },
+          { text: s.followUp ? "follow up review later" : "", weight: 0.5 },
         ],
         lastActivityAt: s.lastActivityAt,
         lastOpenedAt: s.lastOpenedAt,
@@ -142,6 +144,9 @@ export function CommandPalette() {
     } else if (e.key.toLowerCase() === "d" && e.metaKey && current?.kind === "session") {
       e.preventDefault();
       void toggleFavorite(current.session);
+    } else if (e.key.toLowerCase() === "f" && e.metaKey && current?.kind === "session") {
+      e.preventDefault();
+      void toggleFollowUp(current.session);
     } else if (e.key === "c" && e.metaKey && current?.kind === "session" && !window.getSelection()?.toString()) {
       e.preventDefault();
       const id = current.session.externalId ?? current.session.id;
@@ -202,7 +207,7 @@ export function CommandPalette() {
                 <span className="kbd">⌥</span>
                 <span className="kbd">↵</span> Filter to {STATUS[statusKey(current.session)].label}
               </span>
-              <span className="flex items-center gap-1.5" title="⌘P go to project · ⌘D favorite">
+              <span className="flex items-center gap-1.5" title="⌘P go to project · ⌘D favorite · ⌘F follow up">
                 <span className="kbd">⌘</span>
                 <span className="kbd">C</span> Copy ID
               </span>
@@ -255,6 +260,11 @@ function Row({ item, active, index, onHover, onClick }: { item: Item; active: bo
         </div>
         <StatusDot status={key} size={7} />
         {s.favorite && <span className="text-[11px] text-star-dim">★</span>}
+        {s.followUp && (
+          <span className="text-ink-3" title="In Follow up">
+            <IconFlagFilled size={11} />
+          </span>
+        )}
       </div>
     );
   }

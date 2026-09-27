@@ -18,6 +18,8 @@ export interface SessionFilter {
   statuses?: StatusKey[];
   accounts?: string[];
   favoritesOnly?: boolean;
+  /** Only sessions in the user's Follow up queue. */
+  followUpOnly?: boolean;
   /** Last activity inside this many days. null / undefined = any time. */
   recentWindowDays?: number | null;
   /** Free text; every token must match (title, project, provider, branch, folder). */
@@ -37,7 +39,7 @@ export function projectKey(s: Session, ctx: FilterContext): string {
 const some = <T,>(list: T[] | undefined): list is T[] => !!list && list.length > 0;
 
 export function isFilterEmpty(f: SessionFilter): boolean {
-  return !some(f.projects) && !some(f.providers) && !some(f.statuses) && !some(f.accounts) && !f.favoritesOnly && !f.recentWindowDays && !f.query?.trim();
+  return !some(f.projects) && !some(f.providers) && !some(f.statuses) && !some(f.accounts) && !f.favoritesOnly && !f.followUpOnly && !f.recentWindowDays && !f.query?.trim();
 }
 
 export function matchesFilter(s: Session, f: SessionFilter, ctx: FilterContext): boolean {
@@ -46,6 +48,7 @@ export function matchesFilter(s: Session, f: SessionFilter, ctx: FilterContext):
   if (some(f.providers) && !f.providers.includes(s.provider)) return false;
   if (some(f.accounts) && !f.accounts.includes(s.providerAccountId ?? "")) return false;
   if (f.favoritesOnly && !s.favorite) return false;
+  if (f.followUpOnly && !s.followUp) return false;
   if (f.recentWindowDays && ageMs(s.lastActivityAt, ctx.now) >= f.recentWindowDays * DURATION.DAY) return false;
   const q = f.query?.trim();
   if (q) {

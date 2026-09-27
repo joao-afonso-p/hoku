@@ -37,3 +37,12 @@ describe("session filter", () => {
     expect(matchesFilter(a, { query: "lumen calendar" }, ctx)).toBe(false);
   });
 });
+
+describe("follow up filter", () => {
+  it("keeps only queued sessions", () => {
+    const queued = session({ followUp: { addedAt: daysAgo(1), dueAt: null } });
+    const other = session();
+    expect(isFilterEmpty({ followUpOnly: true })).toBe(false);
+    expect(applyFilter([queued, other], { followUpOnly: true }, ctx).map((s) => s.id)).toEqual([queued.id]);
+  });
+});

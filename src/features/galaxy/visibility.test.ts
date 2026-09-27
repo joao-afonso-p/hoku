@@ -55,6 +55,12 @@ describe("galaxy visibility", () => {
     expect(visibilityReason(s, current, NOW)).toBe("favorite");
   });
 
+  it("keeps sessions in Follow up on the map", () => {
+    const s = session({ lastActivityAt: daysAgo(90), followUp: { addedAt: daysAgo(1), dueAt: null } });
+    expect(visibilityReason(s, current, NOW)).toBe("follow");
+    expect(visibilityReason({ ...s, followUp: null }, current, NOW)).toBe("hidden");
+  });
+
   it("respects the configured window", () => {
     const s = session({ lastActivityAt: daysAgo(10) });
     expect(isSessionVisible(s, { ...current, recentWindowDays: 7 }, NOW)).toBe(false);

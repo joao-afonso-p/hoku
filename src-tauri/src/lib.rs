@@ -55,6 +55,7 @@ pub fn run() {
                 commands::parse_reference,
                 commands::add_manual_session,
                 commands::update_session,
+                commands::set_follow_up,
                 commands::delete_session,
                 commands::set_link,
                 commands::open_session,

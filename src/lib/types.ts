@@ -107,8 +107,21 @@ export interface Session {
   projectLocked: boolean;
   titleLocked: boolean;
   sourceMissing: boolean;
+  /** In the user's Follow up queue. User-owned; scans and the runtime monitor never touch it. */
+  followUp?: FollowUp | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * The user's own intention to come back to a session ("Review later"). Not a runtime state:
+ * Needs You is a provider blocking on a human; Follow up is the human's reminder.
+ */
+export interface FollowUp {
+  /** When it was put in the queue. */
+  addedAt: string;
+  /** Remind at / snoozed until. null = no date. */
+  dueAt?: string | null;
 }
 
 export interface SessionLink {

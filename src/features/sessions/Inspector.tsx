@@ -1,17 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
-import { copy, fail, openSession, patchSession, reload, removeSession, reveal, select, toggleFavorite } from "../../app/actions";
+import { copy, fail, followUp, followUpDone, openSession, patchSession, reload, removeSession, reveal, select, toggleFavorite } from "../../app/actions";
 import { useHub } from "../../app/store";
+import { useMinuteClock } from "../../app/useClock";
 import { useVisibility } from "../../app/model";
 import { isSessionVisible } from "../galaxy/visibility";
 import { api } from "../../lib/api";
 import { tildify } from "../../lib/paths";
 import { absoluteTime, relativeTime } from "../../lib/time";
 import type { Session } from "../../lib/types";
-import { IconArrowUpRight, IconClose, IconCopy, IconEdit, IconFolder, IconLink, IconStar, IconStarFilled, IconTrash } from "../../components/Icons";
+import { IconArrowUpRight, IconCheck, IconClock, IconClose, IconCopy, IconEdit, IconFlag, IconFlagFilled, IconFolder, IconLink, IconStar, IconStarFilled, IconTrash } from "../../components/Icons";
 import { openDescription, openHint, PROVIDERS, surfaceLabel } from "../../providers";
 import { GlyphIcon } from "../constellation/Glyph";
 import { isInferred, reasonText, STATUS, stateSince, statusKey } from "../runtime/status";
 import { StatusDot } from "../runtime/StatusMark";
+import { DueMenu } from "../follow-up/DueMenu";
+import { addedLabel, dueLabel, followUpKey, OVERDUE } from "../follow-up/followUp";
 
 export const INSPECTOR_WIDTH = 348;
 
@@ -172,7 +175,14 @@ export function Inspector({ session }: { session: Session }) {
             {session.favorite ? <IconStarFilled size={13} className="text-star" /> : <IconStar size={13} />}
             {session.favorite ? "Favorited" : "Favorite"}
           </button>
+          {!session.followUp && (
+            <button className="btn" onClick={() => void followUp(session)} title="Review this session later (F)">
+              <IconFlag size={13} /> Follow up
+            </button>
+          )}
         </div>
+
+        {session.followUp && <FollowUpBlock session={session} />}
 
         <dl className="mt-5 border-t border-line pt-3">
           <div className="meta-row">
@@ -282,7 +292,9 @@ export function Inspector({ session }: { session: Session }) {
       </div>
 
       <div className="flex items-center justify-between border-t border-line px-4 py-2.5">
-        <span className="text-[11px] text-ink-4">Double-click title to rename</span>
+        <span className="text-[11px] text-ink-4">
+          Double-click title to rename · <span className="kbd">F</span> follow up
+        </span>
         <button className="btn btn-ghost h-7 px-2 text-[12px] text-ink-3 hover:text-danger" onClick={() => void removeSession(session)}>
           <IconTrash size={13} /> Remove
         </button>
@@ -296,6 +308,34 @@ function Row({ label, value, mono }: { label: string; value: string; mono?: bool
     <div className="meta-row">
       <dt>{label}</dt>
       <dd className={mono ? "font-mono text-[11.5px] select-text" : "select-text"}>{value}</dd>
+    </div>
+  );
+}
+
+/** The user's own reminder. Deliberately quieter than Needs You: nothing is blocked on it. */
+function FollowUpBlock({ session }: { session: Session }) {
+  const now = useMinuteClock();
+  const f = session.followUp!;
+  const key = followUpKey(f, now);
+  const color = key === "overdue" ? OVERDUE : key === "due" ? "var(--color-star)" : undefined;
+  return (
+    <div className="mt-3 rounded-[9px] border border-line px-2.5 py-2 text-[12px]">
+      <div className="flex items-center gap-1.5">
+        <IconFlagFilled size={12} className="text-ink-3" />
+        <span className="font-medium text-ink-2">Follow up</span>
+        <span className={color ? "" : "text-ink-3"} style={{ color }} title={f.dueAt ? new Date(f.dueAt).toLocaleString() : undefined}>
+          · {dueLabel(f, now)}
+        </span>
+        <span className="ml-auto shrink-0 text-[11px] text-ink-4">{addedLabel(f, now)}</span>
+      </div>
+      <div className="mt-2 flex gap-1.5">
+        <DueMenu session={session} className="btn h-7 px-2.5 text-[12px]" title="Snooze or set a reminder">
+          <IconClock size={13} /> {f.dueAt ? "Snooze" : "Remind me"}
+        </DueMenu>
+        <button className="btn h-7 px-2.5 text-[12px]" onClick={() => void followUpDone(session)} title="Done: remove from Follow up (F)">
+          <IconCheck size={13} /> Done
+        </button>
+      </div>
     </div>
   );
 }

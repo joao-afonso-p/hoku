@@ -1,6 +1,6 @@
 //! IPC surface. Thin: validate, delegate to db / scan / launch, map errors to HubError.
 
-use crate::db::{self, ManualSessionInput, ProjectInput, SessionPatch};
+use crate::db::{self, FollowUpInput, ManualSessionInput, ProjectInput, SessionPatch};
 use crate::integrations;
 use crate::launch::{self, LaunchContext, OpenResult};
 use crate::models::*;
@@ -322,6 +322,26 @@ pub fn update_session(state: Db, id: String, patch: SessionPatchArgs) -> HubResu
             provider_account_id: patch.provider_account_id,
             favorite: patch.favorite,
         },
+    )
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FollowUpArgs {
+    due_at: Option<String>,
+    added_at: Option<String>,
+}
+
+/// Queue a session for follow-up (or reschedule it); `null` clears it (Done).
+#[tauri::command]
+pub fn set_follow_up(state: Db, id: String, follow_up: Option<FollowUpArgs>) -> HubResult<Session> {
+    db::set_follow_up(
+        &lock(&state),
+        &id,
+        follow_up.map(|f| FollowUpInput {
+            due_at: f.due_at,
+            added_at: f.added_at,
+        }),
     )
 }
 

@@ -38,7 +38,7 @@ on first launch; the old file is left as a backup. Migrations are an ordered lis
 |---|---|
 | `projects` | name, optional root path, accent, **stable galaxy slot**, demo flag, `archived_at` (archived projects keep everything and restore in place) |
 | `provider_accounts` | per-vendor account labels (`claude` / `codex`), auth mode, status. Labels only, never secrets |
-| `sessions` | the index. `(provider, external_id)` is unique. User-owned flags: `favorite`, `notes`, `project_locked`, `title_locked`. `runtime_*` columns hold the normalized runtime status (monitor-owned) |
+| `sessions` | the index. `(provider, external_id)` is unique. User-owned flags: `favorite`, `notes`, `project_locked`, `title_locked`, and Follow up (`follow_up_at` when queued, optional `follow_up_due_at` reminder). `runtime_*` columns hold the normalized runtime status (monitor-owned) |
 | `activity_events` | semantic runtime transitions for the Activity timeline (90 days) |
 | `session_links` | optional undirected relationships |
 | `scan_runs` | per-adapter scan history (for "last scan") |
@@ -53,6 +53,8 @@ and deep link. It **never overwrites user intent**:
 - an explicit project choice, including "Unsorted" (`project_locked`)
 - any existing assignment
 - notes, favorite, account
+- Follow up (`follow_up_at`, `follow_up_due_at`): only `set_follow_up` writes these. The
+  runtime monitor doesn't touch them either
 
 Sessions the provider no longer reports are flagged `source_missing`, never deleted.
 
@@ -122,8 +124,9 @@ docs/constellation-layout.md.
 
 A single small store (`app/store.ts`) holds a snapshot of the DB (including recent activity
 events) plus UI state: view (Galaxy / Sessions), focus, selection, overlay, drawer (Needs
-You / Activity / Favorites / Projects), status filter, Sessions filter and sort, toasts and
-scan report. Mutations call the backend and then
+You / Follow up / Activity / Favorites / Projects), status filter, Sessions filter and sort, toasts and
+scan report. The Follow up drawer's grouping and project filter live there too (not
+persisted). Mutations call the backend and then
 reload the snapshot. The dataset is hundreds of rows, so this stays simple and consistent.
 
 ## Security

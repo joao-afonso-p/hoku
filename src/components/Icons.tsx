@@ -160,3 +160,16 @@ export const IconArchive = (p: P) => (
     <path d="M3.6 6.2v5.9a1 1 0 0 0 1 1h6.8a1 1 0 0 0 1-1V6.2M6.6 8.7h2.8" />
   </Svg>
 );
+/** Follow up: a flag you plant to come back to. */
+export const IconFlag = (p: P) => (
+  <Svg {...p}>
+    <path d="M4.2 13.4V2.8" />
+    <path d="M4.2 3.3h7.6l-1.7 2.7 1.7 2.7H4.2" />
+  </Svg>
+);
+export const IconFlagFilled = (p: P) => (
+  <Svg {...p}>
+    <path d="M4.2 13.4V2.8" />
+    <path d="M4.2 3.3h7.6l-1.7 2.7 1.7 2.7H4.2" fill="currentColor" />
+  </Svg>
+);
