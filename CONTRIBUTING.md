@@ -189,7 +189,11 @@ any of them won't be merged.
    file contents. Runtime `detail` is capped at 160 characters by `Observation::detail`.
    Reading a transcript *tail* in memory to derive state is fine, but persisting it isn't.
 4. **No network.** Hoku has no backend, telemetry or analytics. Don't add HTTP clients,
-   remote fonts or scripts, or loosen the CSP in `tauri.conf.json`.
+   remote fonts or scripts, or loosen the CSP in `tauri.conf.json`. The only exception is
+   the opt-in, click-to-generate Project Resume AI draft (`src-tauri/src/resume.rs`). It
+   goes through the user's installed Claude Code CLI with an inspectable, scrubbed payload.
+   Don't widen what it sends, and don't make it automatic (see
+   [docs/architecture.md](docs/architecture.md#optional-ai-drafts-resumers)).
 5. **Launch paths are an injection surface.** Anything from a provider store is untrusted
    input. Validate ids, quote paths, escape AppleScript, and add a URL prefix to
    `allowed_url` only when a new scheme is really needed, with a test.

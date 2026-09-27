@@ -160,3 +160,9 @@ export const IconArchive = (p: P) => (
     <path d="M3.6 6.2v5.9a1 1 0 0 0 1 1h6.8a1 1 0 0 0 1-1V6.2M6.6 8.7h2.8" />
   </Svg>
 );
+export const IconResume = (p: P) => (
+  <Svg {...p}>
+    <path d="M3 3.5h10M3 6.5h6M3 9.5h4" />
+    <path d="m9.5 9 3.5 2.25L9.5 13.5Z" />
+  </Svg>
+);
