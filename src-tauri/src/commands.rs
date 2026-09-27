@@ -354,7 +354,7 @@ pub async fn open_session(
     // Yield the foreground now, synchronously, while Hoku is certainly still frontmost.
     let (tx, rx) = std::sync::mpsc::channel();
     let _ = app.run_on_main_thread(move || {
-        launch::yield_to(&launch::TERMINAL_BUNDLES);
+        launch::yield_to(&launch::HOST_BUNDLES);
         let _ = tx.send(());
     });
     let _ = rx.recv_timeout(std::time::Duration::from_millis(500));

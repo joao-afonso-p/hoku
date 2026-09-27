@@ -75,16 +75,41 @@ impl LiveSession {
 
 // ───────────────────────────── runtime ─────────────────────────────
 
+/// Tools that always stop for the user: a question, or the plan-approval dialog.
+const ASKS_USER: [&str; 2] = ["AskUserQuestion", "ExitPlanMode"];
+
+/// A tool the assistant called that hasn't returned yet.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PendingTool {
+    pub id: Option<String>,
+    pub name: String,
+    /// For AskUserQuestion: the first question, as a preview.
+    pub question: Option<String>,
+    pub at: Option<String>,
+}
+
 /// What the end of a transcript says about the current turn.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct TranscriptTail {
-    /// Tool the assistant called and that hasn't returned yet.
-    pub pending_tool: Option<String>,
-    /// For AskUserQuestion: the first question, as a preview.
-    pub question: Option<String>,
+    /// Tools called and not yet returned, in call order. Parallel calls return one by one, so
+    /// each result settles only its own call.
+    pub pending: Vec<PendingTool>,
     /// The turn ended on an API error: (kind, message, timestamp).
     pub api_error: Option<(String, String, Option<String>)>,
     pub interrupted: bool,
+}
+
+impl TranscriptTail {
+    /// The latest pending tool.
+    pub fn pending_tool(&self) -> Option<&str> {
+        self.pending.last().map(|t| t.name.as_str())
+    }
+    /// A pending tool that is waiting for the user whatever else is going on.
+    pub fn asking(&self) -> Option<&PendingTool> {
+        self.pending
+            .iter()
+            .find(|t| ASKS_USER.contains(&t.name.as_str()))
+    }
 }
 
 fn content_blocks(v: &Value) -> Vec<&Value> {
@@ -132,40 +157,62 @@ pub fn parse_transcript_tail(raw: &str) -> TranscriptTail {
                     .and_then(|x| x.as_str())
                     .map(str::to_string);
                 t.api_error = Some((error, msg, at));
-                t.pending_tool = None;
+                t.pending.clear();
                 continue;
             }
             t.api_error = None;
             t.interrupted = false;
-            if let Some(tool) = blocks
+            // Claude Code writes each content block of a message as its own line, so parallel
+            // calls arrive as consecutive tool_use lines.
+            let tools: Vec<&&Value> = blocks
                 .iter()
-                .rev()
-                .find(|b| b.get("type").and_then(|x| x.as_str()) == Some("tool_use"))
-            {
+                .filter(|b| b.get("type").and_then(|x| x.as_str()) == Some("tool_use"))
+                .collect();
+            if tools.is_empty() {
+                if !blocks.is_empty() {
+                    t.pending.clear();
+                }
+                continue;
+            }
+            let at = v
+                .get("timestamp")
+                .and_then(|x| x.as_str())
+                .map(str::to_string);
+            for tool in tools {
+                let id = tool.get("id").and_then(|x| x.as_str()).map(str::to_string);
                 let name = tool
                     .get("name")
                     .and_then(|x| x.as_str())
                     .unwrap_or("tool")
                     .to_string();
-                t.question = (name == "AskUserQuestion")
+                let question = (name == "AskUserQuestion")
                     .then(|| {
                         tool.pointer("/input/questions/0/question")
                             .and_then(|q| q.as_str())
                             .map(str::to_string)
                     })
                     .flatten();
-                t.pending_tool = Some(name);
-            } else if !blocks.is_empty() {
-                t.pending_tool = None;
-                t.question = None;
+                t.pending.retain(|p| id.is_none() || p.id != id);
+                t.pending.push(PendingTool {
+                    id,
+                    name,
+                    question,
+                    at: at.clone(),
+                });
             }
         } else {
-            if blocks
+            let results: Vec<Option<&str>> = blocks
                 .iter()
-                .any(|b| b.get("type").and_then(|x| x.as_str()) == Some("tool_result"))
-            {
-                t.pending_tool = None;
-                t.question = None;
+                .filter(|b| b.get("type").and_then(|x| x.as_str()) == Some("tool_result"))
+                .map(|b| b.get("tool_use_id").and_then(|x| x.as_str()))
+                .collect();
+            if !results.is_empty() {
+                if results.iter().any(Option::is_none) {
+                    t.pending.clear();
+                } else {
+                    t.pending
+                        .retain(|p| p.id.is_some() && !results.contains(&p.id.as_deref()));
+                }
                 continue;
             }
             if v.get("isMeta").and_then(|b| b.as_bool()).unwrap_or(false) {
@@ -181,21 +228,29 @@ pub fn parse_transcript_tail(raw: &str) -> TranscriptTail {
             };
             t.interrupted = text.trim_start().starts_with("[Request interrupted");
             t.api_error = None;
-            t.pending_tool = None;
-            t.question = None;
+            t.pending.clear();
         }
     }
     t
+}
+
+fn asking_reason(tool: &PendingTool) -> (&'static str, Option<String>) {
+    if tool.name == "AskUserQuestion" {
+        ("Asked a question", tool.question.clone())
+    } else {
+        ("Plan needs approval", None)
+    }
 }
 
 fn waiting_reason(
     waiting_for: Option<&str>,
     tail: Option<&TranscriptTail>,
 ) -> (&'static str, Option<String>) {
-    let tool = tail.and_then(|t| t.pending_tool.as_deref());
+    if let Some(asking) = tail.and_then(|t| t.asking()) {
+        return asking_reason(asking);
+    }
+    let tool = tail.and_then(|t| t.pending_tool());
     match (waiting_for, tool) {
-        (_, Some("AskUserQuestion")) => ("Asked a question", tail.and_then(|t| t.question.clone())),
-        (_, Some("ExitPlanMode")) => ("Plan needs approval", None),
         (Some("permission prompt") | None, Some(tool)) => {
             ("Waiting for permission", Some(tool.to_string()))
         }
@@ -224,7 +279,17 @@ pub fn observe_live(
     };
     match l.status.as_deref() {
         Some("busy") => {
-            let reason = match tail.and_then(|t| t.pending_tool.as_deref()) {
+            // A question or plan approval waits for the user even if the registry hasn't caught
+            // up yet (or this Claude Code build doesn't publish "waiting"). Other pending tools
+            // are work: most run without asking, and the registry says when one does.
+            if let Some(asking) = tail.and_then(|t| t.asking()) {
+                let (reason, detail) = asking_reason(asking);
+                return Observation::new(RuntimeState::NeedsInput, Confidence::Medium, SOURCE)
+                    .reason(reason)
+                    .detail(detail)
+                    .since(asking.at.clone().or(changed));
+            }
+            let reason = match tail.and_then(|t| t.pending_tool()) {
                 Some(tool) => format!("Running {tool}"),
                 None => "Generating".into(),
             };
@@ -744,7 +809,7 @@ mod tests {
     #[test]
     fn maps_registry_states() {
         let tail = parse_transcript_tail(TOOL_PENDING);
-        assert_eq!(tail.pending_tool.as_deref(), Some("Bash"));
+        assert_eq!(tail.pending_tool(), Some("Bash"));
 
         let busy = observe_live(&live("busy", None, 0, 10_000), Some(&tail), None);
         assert_eq!(
@@ -820,7 +885,7 @@ mod tests {
             "{TOOL_PENDING}{}",
             r#"{"type":"user","message":{"content":[{"type":"tool_result","content":"ok"}]}}"#
         );
-        assert_eq!(parse_transcript_tail(&done).pending_tool, None);
+        assert_eq!(parse_transcript_tail(&done).pending_tool(), None);
 
         let stop = r#"{"type":"user","message":{"content":[{"type":"text","text":"[Request interrupted by user]"}]}}"#;
         assert_eq!(
@@ -832,6 +897,102 @@ mod tests {
             .reason
             .as_deref(),
             Some("Interrupted")
+        );
+    }
+
+    /// Parallel calls: one line per content block, results arriving one by one.
+    const PARALLEL: &str = r#"{"type":"user","message":{"role":"user","content":"deploy it"},"timestamp":"2026-09-24T10:00:00.000Z"}
+{"type":"assistant","message":{"id":"m1","content":[{"type":"thinking","thinking":"…"}]},"timestamp":"2026-09-24T10:00:01.000Z"}
+{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"t1","name":"Read","input":{}}]},"timestamp":"2026-09-24T10:00:02.000Z"}
+{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"t2","name":"Bash","input":{"command":"./deploy.sh"}}]},"timestamp":"2026-09-24T10:00:02.100Z"}
+{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"t3","name":"Grep","input":{}}]},"timestamp":"2026-09-24T10:00:02.200Z"}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"x"}]},"timestamp":"2026-09-24T10:00:03.000Z"}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t3","content":"y"}]},"timestamp":"2026-09-24T10:00:03.100Z"}
+"#;
+
+    #[test]
+    fn a_finished_parallel_tool_does_not_settle_the_one_waiting() {
+        let tail = parse_transcript_tail(PARALLEL);
+        assert_eq!(tail.pending_tool(), Some("Bash"));
+        let o = observe_live(
+            &live("waiting", Some("permission prompt"), 0, 10_000),
+            Some(&tail),
+            None,
+        );
+        assert_eq!(
+            (o.state, o.reason.as_deref(), o.detail.as_deref()),
+            (
+                RuntimeState::NeedsInput,
+                Some("Waiting for permission"),
+                Some("Bash")
+            )
+        );
+        let done = format!(
+            "{PARALLEL}{}",
+            r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t2","content":"ok"}]}}"#
+        );
+        assert_eq!(parse_transcript_tail(&done).pending, vec![]);
+    }
+
+    #[test]
+    fn questions_and_plans_need_you_even_if_the_registry_says_busy() {
+        let ask = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"q1","name":"AskUserQuestion","input":{"questions":[{"question":"Which database?"}]}}]},"timestamp":"2026-09-24T10:00:05.000Z"}"#;
+        let o = observe_live(
+            &live("busy", None, 0, 9_000),
+            Some(&parse_transcript_tail(ask)),
+            None,
+        );
+        assert_eq!(
+            (
+                o.state,
+                o.confidence,
+                o.reason.as_deref(),
+                o.detail.as_deref()
+            ),
+            (
+                RuntimeState::NeedsInput,
+                Confidence::Medium,
+                Some("Asked a question"),
+                Some("Which database?")
+            )
+        );
+        assert!(o.action_required);
+        assert_eq!(o.since.as_deref(), Some("2026-09-24T10:00:05.000Z"));
+
+        let plan = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"p1","name":"ExitPlanMode","input":{"plan":"1. …"}}]}}"#;
+        let o = observe_live(
+            &live("busy", None, 0, 9_000),
+            Some(&parse_transcript_tail(plan)),
+            None,
+        );
+        assert_eq!(
+            (o.state, o.reason.as_deref()),
+            (RuntimeState::NeedsInput, Some("Plan needs approval"))
+        );
+
+        // Answered: back to work.
+        let answered = format!(
+            "{ask}\n{}",
+            r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"q1","content":"Postgres"}]}}"#
+        );
+        assert_eq!(
+            observe_live(
+                &live("busy", None, 0, 9_000),
+                Some(&parse_transcript_tail(&answered)),
+                None
+            )
+            .state,
+            RuntimeState::Working
+        );
+        // Any other pending tool on a busy session is work, not a wait: most run unasked.
+        let o = observe_live(
+            &live("busy", None, 0, 9_000),
+            Some(&parse_transcript_tail(PARALLEL)),
+            None,
+        );
+        assert_eq!(
+            (o.state, o.reason.as_deref()),
+            (RuntimeState::Working, Some("Running Bash"))
         );
     }
 

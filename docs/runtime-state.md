@@ -51,10 +51,49 @@ Visual priority: Needs You → Error → Working → Ready → Idle → Offline 
 
 | Provider | Signal | Live state |
 |---|---|---|
-| **Claude Code** | Its own session registry `~/.claude/sessions/<pid>.json`. Claude Code writes `status` (`busy` · `waiting` · `idle` · `shell`) and, while waiting, `waitingFor` (`permission prompt`, `input needed`, `dialog open`, `sandbox request`, `worker request`, `goal proposal`) on every change, with `statusUpdatedAt`. The pid is checked with `kill(pid, 0)`. The last 256 KB of the transcript adds the pending tool (`Running Bash`, `AskUserQuestion` → "Asked a question" + the question, `ExitPlanMode` → "Plan needs approval") and API errors (`authentication_failed` → Authentication required, actionable; `rate_limit` → Usage limit reached; `server_error` → Request failed). | **Full**, high confidence |
-| **Codex Desktop** | Rollout tail (`sessions/…/rollout-*.jsonl`, last 256 KB) for threads that are held open (`thread-writer-locks/<id>.lock`) or were updated in the last 12 h. `task_started` → working · `task_complete` → ready · `turn_aborted` → idle · `error` → error. A pending tool call carrying `sandbox_permissions: "require_escalated"`, still unanswered after 4 s → **Waiting for approval** (its `justification` is the detail). A pending `request_user_input` → **Asked a question**. Codex app not running → offline (high). | **Partial**, medium confidence |
+| **Claude Code** | Its own session registry `~/.claude/sessions/<pid>.json`. Claude Code writes `status` (`busy` · `waiting` · `idle` · `shell`) and, while waiting, `waitingFor` (`permission prompt`, `input needed`, `dialog open`, `sandbox request`, `worker request`, `goal proposal`) on every change, with `statusUpdatedAt`. The pid is checked with `kill(pid, 0)`. The last 256 KB of the transcript adds the pending tools, tracked by `tool_use` id so a parallel call that finishes doesn't hide one still waiting (`Running Bash`, `AskUserQuestion` → "Asked a question" + the question, `ExitPlanMode` → "Plan needs approval"), and API errors (`authentication_failed` → Authentication required, actionable; `rate_limit` → Usage limit reached; `server_error` → Request failed). | **Full**, high confidence |
+| **Codex Desktop** | Rollout tail (`sessions/…/rollout-*.jsonl`, last 256 KB) for threads that are held open (`thread-writer-locks/<id>.lock`) or were updated in the last 12 h. `task_started` → working · `task_complete` → ready · `turn_aborted` → idle · `error` → error. Every call without an output is tracked by `call_id` (see [Codex approvals](#codex-approvals)): a pending `request_user_input` → **Asked a question**, a pending `request_permissions` → **Permission requested**, a pending call Codex would ask about, still unanswered after 4 s → **Waiting for approval** (its `justification` is the detail). Codex app not running → offline (high). | **Partial**, medium confidence |
 | **Claude Desktop · Cowork** | Only whether Claude Desktop runs and when a session's metadata file last changed. Changed < 90 s ago → working (low). < 30 min → unknown. Otherwise offline (low). It never claims Needs You. | **Limited**, low confidence |
 | **Claude Desktop · chats** | Nothing local. Always unknown. | **None** |
+
+### Claude Code: registry first, transcript as a backstop
+
+The registry's `waiting` is authoritative: any `waitingFor` is Needs You, and the transcript
+only names what it's waiting for. The transcript overrides a `busy` registry in one case: a
+pending `AskUserQuestion` or `ExitPlanMode`. Those tools always stop for the user, so the
+session is Needs You (medium confidence) even if the registry hasn't caught up or the Claude
+Code build doesn't publish `waiting`. Any other pending tool on a busy session stays
+**working**: most tools run without asking, and the registry says when one does.
+
+### Codex approvals
+
+Codex doesn't write approval requests (`exec_approval_request`,
+`apply_patch_approval_request`, `request_permissions`, `request_user_input` events) to the
+rollout. The only trace is a call that has no output yet, so Hoku infers the request from the
+call:
+
+| Pending call | State | Confidence |
+|---|---|---|
+| `request_user_input` | Needs You · Asked a question (at once) | medium |
+| `request_permissions` | Needs You · Permission requested (at once) | medium |
+| `sandbox_permissions: "require_escalated"` or `"with_additional_permissions"` (older builds: `with_escalated_permissions: true`), as JSON arguments or in code-mode JavaScript, unanswered for 4 s on a quiet rollout | Needs You · Waiting for approval | medium |
+| Any command (`exec_command`, `shell`, `shell_command`, code-mode `exec`) under the `untrusted` policy, unanswered for 4 s | Needs You · Waiting for approval | low |
+| A code-mode `exec` cell that yielded ("Script running with cell ID …") carrying one of the above, while the model only polls it with `wait` | Needs You · Waiting for approval | low |
+| Anything else | Working · Running `<tool>` | medium |
+
+Nothing prompts under the `never` policy. The policy comes from the rollout's latest
+`turn_context.approval_policy`, falling back to the thread index's `approval_mode`.
+
+Codex runs one response's calls in parallel and writes their outputs in call order once they
+finish. An escalated call waiting for approval therefore holds back the outputs of every call
+after it. **This caused the "Working while waiting for approval" bug:** only the latest
+pending call was kept, so an escalated call followed by a plain one (`git status` next to
+`gh pr create`) read as "Running exec_command". Every unanswered call now counts.
+
+Known gaps, where Codex's decision isn't visible in the rollout: an `apply_patch` outside the
+writable roots, MCP tool approvals, and commands Codex itself classes as dangerous. These
+still show as working. An approved escalated command that runs for a long time stays
+"Waiting for approval" until its output lands, since approval and execution look the same.
 
 ### Why no Claude Code hooks
 

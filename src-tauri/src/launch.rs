@@ -30,8 +30,49 @@ impl TerminalApp {
     }
 }
 
-/// Terminals Hoku may hand the foreground to.
-pub const TERMINAL_BUNDLES: [&str; 2] = ["com.googlecode.iterm2", "com.apple.Terminal"];
+/// An app a running Claude Code session can live in: where "Go to terminal" goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostApp {
+    ITerm,
+    Terminal,
+    VsCode,
+    VsCodeInsiders,
+}
+
+impl HostApp {
+    pub fn name(&self) -> &'static str {
+        match self {
+            HostApp::ITerm => "iTerm",
+            HostApp::Terminal => "Terminal",
+            HostApp::VsCode => "VS Code",
+            HostApp::VsCodeInsiders => "VS Code Insiders",
+        }
+    }
+    pub fn bundle_id(&self) -> &'static str {
+        match self {
+            HostApp::ITerm => TerminalApp::ITerm.bundle_id(),
+            HostApp::Terminal => TerminalApp::Terminal.bundle_id(),
+            HostApp::VsCode => "com.microsoft.VSCode",
+            HostApp::VsCodeInsiders => "com.microsoft.VSCodeInsiders",
+        }
+    }
+    /// The scriptable terminal behind this host, whose tabs can be selected by tty.
+    pub fn terminal(&self) -> Option<TerminalApp> {
+        match self {
+            HostApp::ITerm => Some(TerminalApp::ITerm),
+            HostApp::Terminal => Some(TerminalApp::Terminal),
+            HostApp::VsCode | HostApp::VsCodeInsiders => None,
+        }
+    }
+}
+
+/// Apps Hoku may hand the foreground to: every `HostApp`.
+pub const HOST_BUNDLES: [&str; 4] = [
+    "com.googlecode.iterm2",
+    "com.apple.Terminal",
+    "com.microsoft.VSCode",
+    "com.microsoft.VSCodeInsiders",
+];
 
 /// Since macOS 14 activation is cooperative: an app only comes forward if the frontmost app
 /// yields to it *before* it asks. So at click time — while Hoku is still frontmost — Hoku
@@ -335,28 +376,66 @@ pub fn find_attached(ps: &str, job: &str) -> Option<(i64, String)> {
     })
 }
 
-/// Walk up the process tree to find which terminal app hosts `pid`.
-fn hosting_terminal(pid: i64) -> Option<TerminalApp> {
-    let mut current = pid;
-    for _ in 0..12 {
-        let out =
-            run(Command::new("/bin/ps").args(["-o", "ppid=,comm=", "-p", &current.to_string()]))
-                .ok()?;
-        let mut parts = out.trim().splitn(2, char::is_whitespace);
-        let ppid: i64 = parts.next()?.trim().parse().ok()?;
-        let comm = parts.next().unwrap_or("").trim();
-        if comm.contains("iTerm") {
-            return Some(TerminalApp::ITerm);
-        }
-        if comm.ends_with("/Terminal") || comm == "Terminal" {
-            return Some(TerminalApp::Terminal);
-        }
-        if ppid <= 1 {
-            return None;
-        }
-        current = ppid;
+/// Which host app an executable belongs to, from its `ps -o comm=` (the full executable path
+/// on macOS). VS Code is recognised only by its own bundle or its `Code Helper` processes, so
+/// other Electron apps and VS Code forks (Cursor, VSCodium, Windsurf…) never match.
+pub fn host_of_executable(comm: &str) -> Option<HostApp> {
+    if comm.contains("iTerm") {
+        return Some(HostApp::ITerm);
+    }
+    if comm.ends_with("/Terminal") || comm == "Terminal" {
+        return Some(HostApp::Terminal);
+    }
+    if comm.contains("/Visual Studio Code - Insiders.app/") {
+        return Some(HostApp::VsCodeInsiders);
+    }
+    if comm.contains("/Visual Studio Code.app/") {
+        return Some(HostApp::VsCode);
+    }
+    // A renamed or relocated bundle still runs its helpers under their own names:
+    // `Code Helper`, `Code Helper (Plugin)`, `Code - Insiders Helper (Renderer)`…
+    let exe = comm.rsplit('/').next().unwrap_or(comm);
+    if exe.starts_with("Code - Insiders Helper") {
+        return Some(HostApp::VsCodeInsiders);
+    }
+    if exe == "Code Helper" || exe.starts_with("Code Helper (") {
+        return Some(HostApp::VsCode);
     }
     None
+}
+
+/// Walk up from `pid` through a `ps -axo pid=,ppid=,comm=` listing to the first host app.
+/// In VS Code the chain is `claude` ← shell ← `Code Helper` (the terminal's pty host) ← `Code`;
+/// started by an extension it is `claude` ← `Code Helper (Plugin)`. tmux and screen servers
+/// are re-parented to launchd, so a session inside them has no host.
+pub fn host_in_process_list(ps: &str, pid: i64) -> Option<HostApp> {
+    let procs: std::collections::HashMap<i64, (i64, &str)> = ps
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim_start();
+            let (pid, rest) = line.split_once(char::is_whitespace)?;
+            let (ppid, comm) = rest.trim_start().split_once(char::is_whitespace)?;
+            Some((pid.parse().ok()?, (ppid.parse().ok()?, comm.trim())))
+        })
+        .collect();
+    let mut current = pid;
+    for _ in 0..12 {
+        let (ppid, comm) = procs.get(&current)?;
+        if let Some(host) = host_of_executable(comm) {
+            return Some(host);
+        }
+        if *ppid <= 1 {
+            return None;
+        }
+        current = *ppid;
+    }
+    None
+}
+
+/// Which app hosts `pid`, from one snapshot of the process table.
+fn hosting_app(pid: i64) -> Option<HostApp> {
+    let ps = run(Command::new("/bin/ps").args(["-axo", "pid=,ppid=,comm="])).ok()?;
+    host_in_process_list(&ps, pid)
 }
 
 /// Select the tab hosting `tty`. Returns the id of the window holding it (for iTerm and
@@ -437,6 +516,48 @@ pub fn window_on_current_space(_: i64) -> bool {
     true
 }
 
+/// Does the running app with this bundle id have a normal window on the Space the user is
+/// looking at? For apps without a scriptable window list (VS Code). Owner pid and layer are
+/// readable without Screen Recording permission; window titles are not, and aren't used.
+#[cfg(target_os = "macos")]
+pub fn app_window_on_current_space(bundle_id: &str) -> bool {
+    use objc2::rc::Retained;
+    use objc2::runtime::AnyObject;
+    use objc2_app_kit::NSRunningApplication;
+    use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString};
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGWindowListCopyWindowInfo(option: u32, relative_to: u32) -> *mut AnyObject;
+    }
+    const ON_SCREEN_ONLY: u32 = 1;
+    let Some(app) = NSRunningApplication::runningApplicationsWithBundleIdentifier(
+        &NSString::from_str(bundle_id),
+    )
+    .firstObject() else {
+        return true;
+    };
+    let pid = app.processIdentifier() as i64;
+    let raw = unsafe { CGWindowListCopyWindowInfo(ON_SCREEN_ONLY, 0) };
+    let Some(list) =
+        (unsafe { Retained::from_raw(raw as *mut NSArray<NSDictionary<NSString, AnyObject>>) })
+    else {
+        return true;
+    };
+    let number = |w: &NSDictionary<NSString, AnyObject>, key: &str| {
+        w.objectForKey(&NSString::from_str(key))
+            .and_then(|n| n.downcast::<NSNumber>().ok())
+            .map(|n| n.as_i64())
+    };
+    list.iter().any(|w| {
+        number(&w, "kCGWindowOwnerPID") == Some(pid) && number(&w, "kCGWindowLayer") == Some(0)
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn app_window_on_current_space(_: &str) -> bool {
+    true
+}
+
 /// A restored window takes a moment to land (the un-minimize animation). Poll, don't guess.
 fn wait_until_on_current_space(window_id: i64, timeout: std::time::Duration) -> bool {
     let start = std::time::Instant::now();
@@ -492,6 +613,41 @@ fn bring_window_here(app: TerminalApp, window_id: i64) -> Result<(), String> {
         },
     );
     osascript(&script).map(|_| ())
+}
+
+/// Go to a session in a host without scriptable terminal tabs (VS Code): the caller activates
+/// the app, which brings its windows forward. Nothing is started.
+fn focus_host_app(host: HostApp, ctx: &LaunchContext) -> OpenResult {
+    let elsewhere = !ctx.hoku_fullscreen
+        && !spaces_switch_on_activate()
+        && !app_window_on_current_space(host.bundle_id());
+    host_app_result(host, elsewhere)
+}
+
+/// VS Code exposes no API to select one of its integrated-terminal tabs from outside the app,
+/// so the message says where to look. `elsewhere`: its windows are on another desktop and macOS
+/// won't switch there on activation; they can't be moved here without Accessibility access.
+pub fn host_app_result(host: HostApp, elsewhere: bool) -> OpenResult {
+    let (message, hint) = if elsewhere {
+        (
+            format!("The session is in {} on another desktop", host.name()),
+            Some("spaces-setting".into()),
+        )
+    } else {
+        (
+            format!(
+                "Switched to {}, where this session is running. Hoku can't select its terminal tab there.",
+                host.name()
+            ),
+            None,
+        )
+    };
+    OpenResult {
+        method: "focus".into(),
+        message,
+        activate: Some(host.bundle_id().into()),
+        hint,
+    }
 }
 
 // ───────────────────────────── per provider ─────────────────────────────
@@ -569,7 +725,11 @@ fn open_claude_code(session: &Session, ctx: &LaunchContext) -> HubResult<OpenRes
                 let job = validate_id(job)?;
                 // Already attached in a terminal tab? Switch to it rather than attach again.
                 if let Some((pid, tty)) = attached_client(job) {
-                    if let Some(app) = hosting_terminal(pid) {
+                    let host = hosting_app(pid);
+                    if let Some(host) = host.filter(|h| h.terminal().is_none()) {
+                        return Ok(focus_host_app(host, ctx));
+                    }
+                    if let Some(app) = host.and_then(|h| h.terminal()) {
                         if let Ok(Some(_)) = focus_tty(app, &tty) {
                             return ok_in(
                                 app,
@@ -604,8 +764,12 @@ fn open_claude_code(session: &Session, ctx: &LaunchContext) -> HubResult<OpenRes
                 format!("pid {}", live.pid),
             ));
         } else {
-            let host = hosting_terminal(live.pid);
-            if let (Some(app), Some(tty)) = (host, tty_of(live.pid)) {
+            let host = hosting_app(live.pid);
+            // VS Code: bring the app forward. Its terminal tabs can't be selected from outside.
+            if let Some(host) = host.filter(|h| h.terminal().is_none()) {
+                return Ok(focus_host_app(host, ctx));
+            }
+            if let (Some(app), Some(tty)) = (host.and_then(|h| h.terminal()), tty_of(live.pid)) {
                 match focus_tty(app, &tty) {
                     Ok(Some(window)) => {
                         // A tab on another desktop: activation alone won't show it unless macOS
@@ -639,7 +803,7 @@ fn open_claude_code(session: &Session, ctx: &LaunchContext) -> HubResult<OpenRes
             // Never start a second copy of a live session: two processes on one conversation
             // conflict. Say where it is instead.
             return Err(HubError {
-                message: "This session is already running in a terminal Hoku can't switch to (for example VS Code, Warp or tmux). Go to it there.".into(),
+                message: "This session is already running in a terminal Hoku can't switch to (for example Warp or tmux). Go to it there.".into(),
                 detail: Some(format!("pid {} · opening another copy would conflict with it", live.pid)),
             });
         }
@@ -736,6 +900,123 @@ mod tests {
         assert!(
             window.contains("create window with default profile") && !window.contains("create tab")
         );
+    }
+
+    const VSCODE: &str = "/Applications/Visual Studio Code.app/Contents";
+
+    #[test]
+    fn recognises_host_apps_by_executable() {
+        let cases = [
+            ("/Applications/iTerm.app/Contents/MacOS/iTerm2", Some(HostApp::ITerm)),
+            ("/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal", Some(HostApp::Terminal)),
+            (&format!("{VSCODE}/MacOS/Code"), Some(HostApp::VsCode)),
+            (&format!("{VSCODE}/Frameworks/Code Helper.app/Contents/MacOS/Code Helper"), Some(HostApp::VsCode)),
+            ("/Applications/Visual Studio Code - Insiders.app/Contents/MacOS/Code - Insiders", Some(HostApp::VsCodeInsiders)),
+            // Renamed bundle: its helpers still say what they are.
+            ("/Applications/VS Code.app/Contents/Frameworks/Code Helper (Plugin).app/Contents/MacOS/Code Helper (Plugin)", Some(HostApp::VsCode)),
+            ("/Applications/Code2.app/Contents/Frameworks/Code - Insiders Helper.app/Contents/MacOS/Code - Insiders Helper", Some(HostApp::VsCodeInsiders)),
+            // VS Code forks and other Electron apps are not VS Code.
+            ("/Applications/Cursor.app/Contents/Frameworks/Cursor Helper.app/Contents/MacOS/Cursor Helper", None),
+            ("/Applications/Cursor.app/Contents/MacOS/Cursor", None),
+            ("/Applications/VSCodium.app/Contents/Frameworks/VSCodium Helper.app/Contents/MacOS/VSCodium Helper", None),
+            ("/Applications/Windsurf.app/Contents/MacOS/Electron", None),
+            ("/Applications/Slack.app/Contents/Frameworks/Slack Helper.app/Contents/MacOS/Slack Helper", None),
+            ("/Applications/Claude.app/Contents/Frameworks/Claude Helper.app/Contents/MacOS/Claude Helper", None),
+            ("/System/Library/PrivateFrameworks/TextInputUIMacHelper.framework/Versions/A/XPCServices/CursorUIViewService.xpc/Contents/MacOS/CursorUIViewService", None),
+            ("/Applications/Warp.app/Contents/MacOS/stable", None),
+            ("/bin/zsh", None),
+            ("-zsh", None),
+            ("tmux", None),
+        ];
+        for (comm, want) in cases {
+            assert_eq!(host_of_executable(comm), want, "{comm}");
+        }
+    }
+
+    #[test]
+    fn walks_the_process_tree_to_the_host() {
+        let ps = format!(
+            "    1     0 /sbin/launchd
+  500     1 {VSCODE}/MacOS/Code
+  510   500 {VSCODE}/Frameworks/Code Helper.app/Contents/MacOS/Code Helper
+  511   500 {VSCODE}/Frameworks/Code Helper (Plugin).app/Contents/MacOS/Code Helper (Plugin)
+  520   510 /bin/zsh
+  521   520 /Users/j/.local/share/claude/versions/2.1.282
+  530   511 /Users/j/.local/share/claude/versions/2.1.282
+  600     1 /Applications/iTerm.app/Contents/MacOS/iTerm2
+  601   600 /usr/bin/login
+  602   601 -zsh
+  603   602 claude
+  700     1 /System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal
+  701   700 login
+  702   701 -zsh
+  703   702 claude
+  800     1 tmux
+  801   800 -zsh
+  802   801 claude
+  900     1 /Applications/Cursor.app/Contents/MacOS/Cursor
+  910   900 /Applications/Cursor.app/Contents/Frameworks/Cursor Helper.app/Contents/MacOS/Cursor Helper
+  920   910 /bin/zsh
+  921   920 claude
+ 1000     1 /Applications/Warp.app/Contents/MacOS/stable
+ 1001  1000 /bin/zsh
+ 1002  1001 claude
+ 1100     1 /Applications/Visual Studio Code - Insiders.app/Contents/MacOS/Code - Insiders
+ 1110  1100 /Applications/Visual Studio Code - Insiders.app/Contents/Frameworks/Code - Insiders Helper.app/Contents/MacOS/Code - Insiders Helper
+ 1120  1110 /bin/zsh
+ 1121  1120 claude
+"
+        );
+        // Integrated terminal: claude ← zsh ← Code Helper (pty host).
+        assert_eq!(host_in_process_list(&ps, 521), Some(HostApp::VsCode));
+        // Started by an extension: claude ← Code Helper (Plugin).
+        assert_eq!(host_in_process_list(&ps, 530), Some(HostApp::VsCode));
+        assert_eq!(
+            host_in_process_list(&ps, 1121),
+            Some(HostApp::VsCodeInsiders)
+        );
+        assert_eq!(host_in_process_list(&ps, 603), Some(HostApp::ITerm));
+        assert_eq!(host_in_process_list(&ps, 703), Some(HostApp::Terminal));
+        // Unsupported hosts keep the safe "go to it there" answer.
+        assert_eq!(host_in_process_list(&ps, 802), None, "tmux");
+        assert_eq!(host_in_process_list(&ps, 921), None, "Cursor");
+        assert_eq!(host_in_process_list(&ps, 1002), None, "Warp");
+        assert_eq!(host_in_process_list(&ps, 4242), None, "gone");
+        // A parent loop can't hang the walk.
+        assert_eq!(host_in_process_list("  5  6 a\n  6  5 b\n", 5), None);
+    }
+
+    #[test]
+    fn every_host_is_yielded_to_and_only_terminals_have_tabs() {
+        for host in [
+            HostApp::ITerm,
+            HostApp::Terminal,
+            HostApp::VsCode,
+            HostApp::VsCodeInsiders,
+        ] {
+            assert!(HOST_BUNDLES.contains(&host.bundle_id()), "{host:?}");
+        }
+        assert_eq!(HostApp::VsCode.bundle_id(), "com.microsoft.VSCode");
+        assert_eq!(
+            HostApp::VsCodeInsiders.bundle_id(),
+            "com.microsoft.VSCodeInsiders"
+        );
+        assert_eq!(HostApp::ITerm.terminal(), Some(TerminalApp::ITerm));
+        assert_eq!(HostApp::Terminal.terminal(), Some(TerminalApp::Terminal));
+        assert_eq!(HostApp::VsCode.terminal(), None);
+        assert_eq!(HostApp::VsCodeInsiders.terminal(), None);
+    }
+
+    #[test]
+    fn vscode_is_focused_not_relaunched() {
+        let r = host_app_result(HostApp::VsCode, false);
+        assert_eq!(r.method, "focus");
+        assert_eq!(r.activate.as_deref(), Some("com.microsoft.VSCode"));
+        assert!(r.message.contains("VS Code") && r.message.contains("terminal tab"));
+        assert_eq!(r.hint, None);
+        let r = host_app_result(HostApp::VsCodeInsiders, true);
+        assert_eq!(r.activate.as_deref(), Some("com.microsoft.VSCodeInsiders"));
+        assert_eq!(r.hint.as_deref(), Some("spaces-setting"));
     }
 
     #[test]

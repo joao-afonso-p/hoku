@@ -158,7 +158,7 @@ export function escape() {
 export async function openSession(session: Session) {
   try {
     const r = await api.openSession(session.id);
-    if (r.hint === "spaces-setting") openOverlay({ kind: "spaces-help", app: r.message.includes("Terminal") ? "Terminal" : "iTerm" });
+    if (r.hint === "spaces-setting") openOverlay({ kind: "spaces-help", app: ["VS Code Insiders", "VS Code", "Terminal"].find((a) => r.message.includes(a)) ?? "iTerm" });
     else toast({ tone: "success", message: r.message });
     void reload();
   } catch (e) {

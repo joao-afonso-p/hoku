@@ -122,11 +122,15 @@ pub enum Turn {
 pub struct PendingCall {
     pub call_id: String,
     pub name: String,
-    /// The model asked to run outside the sandbox (`sandbox_permissions: "require_escalated"`).
+    /// The model asked to leave the sandbox: `sandbox_permissions: "require_escalated"` or
+    /// `"with_additional_permissions"` (older builds: `with_escalated_permissions: true`).
     pub escalated: bool,
-    /// The question shown with an approval, or the first `request_user_input` question.
+    /// The question shown with an approval, the `request_permissions` reason, or the first
+    /// `request_user_input` question.
     pub prompt: Option<String>,
     pub at: Option<String>,
+    /// Code mode: the `exec` cell a `wait` call polls.
+    pub cell: Option<String>,
 }
 
 /// What the end of a Codex rollout (`sessions/…/rollout-*.jsonl`) says about the thread.
@@ -135,23 +139,73 @@ pub struct RolloutTail {
     pub turn: Turn,
     pub turn_at: Option<String>,
     pub last_at: Option<String>,
-    pub pending: Option<PendingCall>,
+    /// Calls with no output yet, in call order. Codex runs one response's calls in parallel and
+    /// writes their outputs in call order once they finish, so a call waiting for approval holds
+    /// back the outputs of every call after it: all of them stay pending together.
+    pub pending: Vec<PendingCall>,
+    /// Code-mode `exec` calls that yielded ("Script running with cell ID …") and are still
+    /// running, keyed by cell id. A nested command can be waiting for approval behind them
+    /// while the model polls with `wait`.
+    pub running_cells: Vec<(String, PendingCall)>,
+    /// `approval_policy` from the latest `turn_context`: fresher than the thread index.
+    pub approval_policy: Option<String>,
 }
 
-fn string_field(raw: &str, key: &str) -> Option<String> {
+fn field_re(key: &str, value: &str) -> Regex {
     static CACHE: OnceLock<Mutex<HashMap<String, Regex>>> = OnceLock::new();
     let mut m = CACHE
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
         .expect("re cache");
-    let re = m.entry(key.to_string()).or_insert_with(|| {
-        Regex::new(&format!(
-            r#"\\?"{key}\\?"\s*:\s*\\?"((?:[^"\\]|\\[^"])*)\\?""#
-        ))
-        .unwrap()
-    });
-    re.captures(raw)
+    // JSON (`"key":"v"`, also escaped inside another string) or a JS object literal (`key: "v"`).
+    m.entry(format!("{key}\u{0}{value}"))
+        .or_insert_with(|| Regex::new(&format!(r#"(?:\\?"|\b){key}\\?"?\s*:\s*{value}"#)).unwrap())
+        .clone()
+}
+
+/// A quoted string value of `key`, wherever it sits in a call's arguments or code-mode input.
+fn string_field(raw: &str, key: &str) -> Option<String> {
+    field_re(key, r#"\\?"((?:[^"\\]|\\[^"])*)\\?""#)
+        .captures(raw)
         .map(|c| c[1].replace("\\n", " ").replace("\\", ""))
+}
+
+/// An id-like value of `key`, quoted or not.
+fn id_field(raw: &str, key: &str) -> Option<String> {
+    field_re(key, r#"\\?"?([A-Za-z0-9_-]+)"#)
+        .captures(raw)
+        .map(|c| c[1].to_string())
+}
+
+/// Does this call ask to run outside the sandbox? Codex prompts for that under every approval
+/// policy except `never`. Matches the field, not just the words, so a command that merely
+/// mentions them (`rg require_escalated`) isn't an escalation.
+fn asks_to_escalate(args: &str) -> bool {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(
+            r#"sandbox_permissions\\?["']?\s*:\s*\\?["']?(?:require_escalated|with_additional_permissions)|with_escalated_permissions\\?["']?\s*:\s*true"#,
+        )
+        .unwrap()
+    })
+    .is_match(args)
+}
+
+/// A code-mode cell that yielded and is still running: "Script running with cell ID <id>".
+fn running_cell(output: &str) -> Option<String> {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"Script running with cell ID\W*([A-Za-z0-9_-]+)").unwrap())
+        .captures(output)
+        .map(|c| c[1].to_string())
+}
+
+/// `approval_policy` is a kebab-case string, or `{"granular": {…}}`.
+fn policy_name(v: &Value) -> Option<String> {
+    match v {
+        Value::String(s) => Some(s.clone()),
+        Value::Object(o) => o.keys().next().cloned(),
+        _ => None,
+    }
 }
 
 pub fn parse_rollout_tail(raw: &str) -> RolloutTail {
@@ -169,22 +223,31 @@ pub fn parse_rollout_tail(raw: &str) -> RolloutTail {
         }
         let kind = v.get("type").and_then(|x| x.as_str()).unwrap_or("");
         let Some(p) = v.get("payload") else { continue };
+        if kind == "turn_context" {
+            if let Some(policy) = p.get("approval_policy").and_then(policy_name) {
+                t.approval_policy = Some(policy);
+            }
+            continue;
+        }
         let ptype = p.get("type").and_then(|x| x.as_str()).unwrap_or("");
         match (kind, ptype) {
-            ("event_msg", "task_started") => {
+            ("event_msg", "task_started" | "turn_started") => {
                 t.turn = Turn::Started;
                 t.turn_at = at;
-                t.pending = None;
+                t.pending.clear();
+                t.running_cells.clear();
             }
-            ("event_msg", "task_complete") => {
+            ("event_msg", "task_complete" | "turn_complete") => {
                 t.turn = Turn::Complete;
                 t.turn_at = at;
-                t.pending = None;
+                t.pending.clear();
+                t.running_cells.clear();
             }
             ("event_msg", "turn_aborted") => {
                 t.turn = Turn::Aborted;
                 t.turn_at = at;
-                t.pending = None;
+                t.pending.clear();
+                t.running_cells.clear();
             }
             ("event_msg", "error") => {
                 t.turn = Turn::Failed(
@@ -209,22 +272,24 @@ pub fn parse_rollout_tail(raw: &str) -> RolloutTail {
                     .and_then(|n| n.as_str())
                     .unwrap_or("tool")
                     .to_string();
-                let escalated = args.contains("require_escalated")
-                    || args.contains("with_escalated_permissions\\\":true")
-                    || args.contains("with_escalated_permissions\":true");
-                let prompt = if name == "request_user_input" {
-                    string_field(args, "question")
-                } else if escalated {
-                    string_field(args, "justification")
-                } else {
-                    None
+                let escalated = asks_to_escalate(args);
+                let prompt = match name.as_str() {
+                    "request_user_input" => string_field(args, "question"),
+                    "request_permissions" => string_field(args, "reason"),
+                    _ if escalated => string_field(args, "justification"),
+                    _ => None,
                 };
-                t.pending = Some(PendingCall {
-                    call_id: p
-                        .get("call_id")
-                        .and_then(|c| c.as_str())
-                        .unwrap_or("")
-                        .to_string(),
+                let call_id = p
+                    .get("call_id")
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                t.pending.retain(|c| c.call_id != call_id);
+                t.pending.push(PendingCall {
+                    call_id,
+                    cell: (name == "wait")
+                        .then(|| id_field(args, "cell_id"))
+                        .flatten(),
                     name,
                     escalated,
                     prompt,
@@ -233,8 +298,29 @@ pub fn parse_rollout_tail(raw: &str) -> RolloutTail {
             }
             ("response_item", "function_call_output" | "custom_tool_call_output") => {
                 let id = p.get("call_id").and_then(|c| c.as_str()).unwrap_or("");
-                if t.pending.as_ref().map(|c| c.call_id == id).unwrap_or(false) {
-                    t.pending = None;
+                let Some(i) = t.pending.iter().position(|c| c.call_id == id) else {
+                    continue;
+                };
+                let call = t.pending.remove(i);
+                let still_running = p
+                    .get("output")
+                    .map(|o| match o {
+                        Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    })
+                    .and_then(|o| running_cell(&o));
+                match (call.name.as_str(), still_running) {
+                    ("exec", Some(cell)) => {
+                        t.running_cells.retain(|(c, _)| *c != cell);
+                        t.running_cells.push((cell, call));
+                    }
+                    // The cell finished: whatever it waited for is settled.
+                    ("wait", None) => {
+                        if let Some(cell) = &call.cell {
+                            t.running_cells.retain(|(c, _)| c != cell);
+                        }
+                    }
+                    _ => {}
                 }
             }
             _ => {}
@@ -249,7 +335,27 @@ fn iso_ms(iso: Option<&str>) -> Option<i64> {
         .map(|d| d.timestamp_millis())
 }
 
+/// Tools that run shell commands, directly or from code-mode JavaScript.
+const RUNS_COMMANDS: [&str; 4] = ["exec_command", "shell", "shell_command", "exec"];
+
+/// Would Codex ask before running this call under `policy`, and how sure is that?
+/// Escalations always prompt (except under `never`). Under `untrusted` every command without an
+/// allow rule prompts, even a plain one: likely, not certain (known-safe commands run freely).
+fn approval_confidence(c: &PendingCall, policy: Option<&str>) -> Option<Confidence> {
+    match policy {
+        Some("never") => None,
+        _ if c.escalated => Some(Confidence::Medium),
+        Some("untrusted") if RUNS_COMMANDS.contains(&c.name.as_str()) => Some(Confidence::Low),
+        _ => None,
+    }
+}
+
 /// Map one thread onto the normalized model. `locked` = Codex holds the thread open.
+/// `approval_mode` is the thread index's column; the rollout's own `turn_context` wins.
+///
+/// Codex doesn't persist approval requests (nor `request_user_input` events), so a request is a
+/// call that is still unanswered: tools that always ask the user count at once; a call Codex
+/// would ask about counts once it has waited [`APPROVAL_GRACE_MS`] on a quiet thread.
 pub fn observe_thread(
     tail: Option<&RolloutTail>,
     locked: bool,
@@ -276,24 +382,43 @@ pub fn observe_thread(
                 return Observation::new(RuntimeState::Offline, Confidence::Medium, SOURCE)
                     .reason("Turn stopped · thread closed");
             }
-            if let Some(c) = &t.pending {
-                let waited = iso_ms(c.at.as_deref()).map(|ms| now - ms).unwrap_or(0);
-                if c.name == "request_user_input" {
-                    return Observation::new(RuntimeState::NeedsInput, Confidence::Medium, SOURCE)
-                        .reason("Asked a question")
-                        .detail(c.prompt.clone())
-                        .since(c.at.clone());
+            let waited = |c: &PendingCall| iso_ms(c.at.as_deref()).map(|ms| now - ms).unwrap_or(0);
+            let asks = |c: &PendingCall, reason: &str, confidence: Confidence| {
+                Observation::new(RuntimeState::NeedsInput, confidence, SOURCE)
+                    .reason(reason)
+                    .detail(c.prompt.clone())
+                    .since(c.at.clone())
+            };
+            if let Some(c) = t.pending.iter().find(|c| c.name == "request_user_input") {
+                return asks(c, "Asked a question", Confidence::Medium);
+            }
+            if let Some(c) = t.pending.iter().find(|c| c.name == "request_permissions") {
+                return asks(c, "Permission requested", Confidence::Medium);
+            }
+            let policy = t.approval_policy.as_deref().or(approval_mode);
+            // Any pending call, not just the latest: a later parallel call must not hide it.
+            let direct = t
+                .pending
+                .iter()
+                .filter(|c| waited(c) > APPROVAL_GRACE_MS && quiet > APPROVAL_GRACE_MS)
+                .find_map(|c| Some((c, approval_confidence(c, policy)?)));
+            // Code mode: a yielded cell that would need approval, while the model only polls it.
+            // Its `wait` round-trips keep the rollout busy, so quietness can't be required.
+            let in_cell = || {
+                if !t.pending.iter().all(|c| c.name == "wait") {
+                    return None;
                 }
-                if c.escalated
-                    && approval_mode != Some("never")
-                    && waited > APPROVAL_GRACE_MS
-                    && quiet > APPROVAL_GRACE_MS
-                {
-                    return Observation::new(RuntimeState::NeedsInput, Confidence::Medium, SOURCE)
-                        .reason("Waiting for approval")
-                        .detail(c.prompt.clone())
-                        .since(c.at.clone());
-                }
+                t.running_cells
+                    .iter()
+                    .map(|(_, c)| c)
+                    .filter(|c| waited(c) > APPROVAL_GRACE_MS)
+                    .find(|c| approval_confidence(c, policy).is_some())
+                    .map(|c| (c, Confidence::Low))
+            };
+            if let Some((c, confidence)) = direct.or_else(in_cell) {
+                return asks(c, "Waiting for approval", confidence);
+            }
+            if let Some(c) = t.pending.last() {
                 return Observation::new(RuntimeState::Working, Confidence::Medium, SOURCE)
                     .reason(format!("Running {}", c.name))
                     .since(t.turn_at.clone())
@@ -661,7 +786,7 @@ impl SessionAdapter for CodexAdapter {
             needs_input: "partial",
             ready: "full",
             error: "partial",
-            detail: "Inferred from the thread's rollout and writer locks. Approvals are detected from escalated commands still pending",
+            detail: "Inferred from the thread's rollout and writer locks. Approvals are detected from escalated commands, permission requests and questions still pending",
         }
     }
 }
@@ -884,6 +1009,309 @@ mod tests {
                 Some("Asked a question"),
                 Some("Which test framework?")
             )
+        );
+    }
+
+    fn started(ts: &str) -> String {
+        line(ts, "event_msg", json!({"type":"task_started"}))
+    }
+    fn call(ts: &str, id: &str, name: &str, args: &str) -> String {
+        line(
+            ts,
+            "response_item",
+            json!({"type":"function_call","name":name,"call_id":id,"arguments":args}),
+        )
+    }
+    fn output(ts: &str, id: &str, out: &str) -> String {
+        line(
+            ts,
+            "response_item",
+            json!({"type":"function_call_output","call_id":id,"output":out}),
+        )
+    }
+    fn observe(raw: &str, mode: Option<&str>) -> Observation {
+        observe_thread(Some(&parse_rollout_tail(raw)), true, mode, now())
+    }
+    const ESCALATED: &str = r#"{"cmd":"gh pr create","sandbox_permissions":"require_escalated","justification":"Allow creating the pull request?"}"#;
+
+    /// The reported case: Codex was waiting for approval and Hoku said "Working". Codex runs a
+    /// response's calls in parallel and writes their outputs in call order once all finish, so
+    /// an escalated call followed by a plain one leaves both pending, the plain one last. Only
+    /// the latest call used to be kept, which hid the approval.
+    #[test]
+    fn approval_is_not_hidden_by_a_later_parallel_call() {
+        let raw = started("2026-09-24T11:58:00.000Z")
+            + &call("2026-09-24T11:58:10.000Z", "c1", "exec_command", ESCALATED)
+            + &call(
+                "2026-09-24T11:58:10.100Z",
+                "c2",
+                "exec_command",
+                r#"{"cmd":"git status"}"#,
+            )
+            + &line(
+                "2026-09-24T11:58:10.200Z",
+                "event_msg",
+                json!({"type":"token_count"}),
+            );
+        let o = observe(&raw, Some("on-request"));
+        assert_eq!(
+            (o.state, o.reason.as_deref(), o.detail.as_deref()),
+            (
+                RuntimeState::NeedsInput,
+                Some("Waiting for approval"),
+                Some("Allow creating the pull request?")
+            )
+        );
+        assert!(o.action_required);
+        assert_eq!(o.since.as_deref(), Some("2026-09-24T11:58:10.000Z"));
+        // Same with the approval last.
+        let raw = started("2026-09-24T11:58:00.000Z")
+            + &call(
+                "2026-09-24T11:58:10.000Z",
+                "c2",
+                "exec_command",
+                r#"{"cmd":"git status"}"#,
+            )
+            + &call("2026-09-24T11:58:10.100Z", "c1", "exec_command", ESCALATED);
+        assert_eq!(
+            observe(&raw, Some("on-request")).state,
+            RuntimeState::NeedsInput
+        );
+    }
+
+    #[test]
+    fn answered_approvals_and_plain_tools_are_work() {
+        let pending = started("2026-09-24T11:58:00.000Z")
+            + &call("2026-09-24T11:58:10.000Z", "c1", "exec_command", ESCALATED)
+            + &call(
+                "2026-09-24T11:58:10.100Z",
+                "c2",
+                "exec_command",
+                r#"{"cmd":"git status"}"#,
+            );
+        // Approved: both outputs land, in call order.
+        let answered = pending.clone()
+            + &output("2026-09-24T11:59:30.000Z", "c1", "created")
+            + &output("2026-09-24T11:59:30.001Z", "c2", "clean");
+        let o = observe(&answered, Some("on-request"));
+        assert_eq!(
+            (o.state, o.reason.as_deref()),
+            (RuntimeState::Working, Some("Turn in progress"))
+        );
+        let done = answered
+            + &line(
+                "2026-09-24T11:59:40.000Z",
+                "event_msg",
+                json!({"type":"task_complete"}),
+            );
+        assert_eq!(
+            observe(&done, Some("on-request")).state,
+            RuntimeState::Ready
+        );
+        // Denied / interrupted: the turn is aborted, nothing is waiting any more.
+        let aborted = pending
+            + &line(
+                "2026-09-24T11:59:00.000Z",
+                "event_msg",
+                json!({"type":"turn_aborted"}),
+            );
+        assert_eq!(
+            observe(&aborted, Some("on-request")).state,
+            RuntimeState::Idle
+        );
+
+        // A long plain command under on-request is work, however long it runs.
+        let build = started("2026-09-24T11:50:00.000Z")
+            + &call(
+                "2026-09-24T11:50:01.000Z",
+                "b1",
+                "exec_command",
+                r#"{"cmd":"cargo build"}"#,
+            );
+        let o = observe(&build, Some("on-request"));
+        assert_eq!(
+            (o.state, o.reason.as_deref()),
+            (RuntimeState::Working, Some("Running exec_command"))
+        );
+        // A command that merely mentions the flag isn't an escalation.
+        let grep = started("2026-09-24T11:50:00.000Z")
+            + &call(
+                "2026-09-24T11:50:01.000Z",
+                "g1",
+                "exec_command",
+                r#"{"cmd":"rg require_escalated codex-rs"}"#,
+            );
+        assert_eq!(
+            observe(&grep, Some("on-request")).state,
+            RuntimeState::Working
+        );
+        // An escalation within the grace period may still be auto-approved: not yet.
+        let fresh = started("2026-09-24T11:59:55.000Z")
+            + &call("2026-09-24T11:59:58.000Z", "c1", "exec_command", ESCALATED);
+        assert_eq!(
+            observe(&fresh, Some("on-request")).state,
+            RuntimeState::Working
+        );
+    }
+
+    #[test]
+    fn every_escalation_shape_is_an_approval() {
+        let shapes = [
+            // Additional permissions (network, extra paths) prompt like a full escalation.
+            r#"{"cmd":"curl -sI https://example.com","sandbox_permissions":"with_additional_permissions","additional_permissions":{"network":{"enabled":true}},"justification":"Allow network access?"}"#,
+            // Older builds.
+            r#"{"command":["npm","publish"],"with_escalated_permissions": true,"justification":"Allow network access?"}"#,
+            // Code-mode JavaScript: unquoted keys.
+            r#"await tools.exec_command({ cmd: "npm publish", sandbox_permissions: "require_escalated", justification: "Allow network access?" })"#,
+        ];
+        for args in shapes {
+            let raw = started("2026-09-24T11:59:00.000Z")
+                + &line(
+                    "2026-09-24T11:59:01.000Z",
+                    "response_item",
+                    json!({"type":"custom_tool_call","name":"exec","call_id":"x1","input":args}),
+                );
+            let o = observe(&raw, Some("on-request"));
+            assert_eq!(
+                (o.state, o.detail.as_deref()),
+                (RuntimeState::NeedsInput, Some("Allow network access?")),
+                "{args}"
+            );
+        }
+    }
+
+    #[test]
+    fn permission_requests_ask_at_once() {
+        let raw = started("2026-09-24T11:59:57.000Z")
+            + &call(
+                "2026-09-24T11:59:58.000Z",
+                "p1",
+                "request_permissions",
+                r#"{"permissions":{"network":{"enabled":true}},"reason":"Download the fixtures"}"#,
+            );
+        let o = observe(&raw, Some("on-request"));
+        assert_eq!(
+            (o.state, o.reason.as_deref(), o.detail.as_deref()),
+            (
+                RuntimeState::NeedsInput,
+                Some("Permission requested"),
+                Some("Download the fixtures")
+            )
+        );
+        let granted = raw + &output("2026-09-24T11:59:59.000Z", "p1", "granted");
+        assert_eq!(
+            observe(&granted, Some("on-request")).state,
+            RuntimeState::Working
+        );
+    }
+
+    #[test]
+    fn untrusted_threads_wait_on_plain_commands() {
+        let context = |policy: Value| {
+            line(
+                "2026-09-24T11:58:00.000Z",
+                "turn_context",
+                json!({"approval_policy": policy, "cwd": "/u/atlas"}),
+            )
+        };
+        let body = started("2026-09-24T11:58:00.100Z")
+            + &call(
+                "2026-09-24T11:58:01.000Z",
+                "c1",
+                "exec_command",
+                r#"{"cmd":"npm install"}"#,
+            );
+        let raw = context(json!("untrusted")) + &body;
+        // The rollout's own policy wins over the index column.
+        let o = observe(&raw, Some("on-request"));
+        assert_eq!(
+            (o.state, o.confidence, o.reason.as_deref()),
+            (
+                RuntimeState::NeedsInput,
+                Confidence::Low,
+                Some("Waiting for approval")
+            )
+        );
+        assert_eq!(
+            observe(&body, Some("untrusted")).state,
+            RuntimeState::NeedsInput
+        );
+        assert_eq!(
+            observe(&body, Some("on-request")).state,
+            RuntimeState::Working
+        );
+        // Nothing prompts under `never`, not even an escalation.
+        let never = context(json!("never"))
+            + &started("2026-09-24T11:58:00.100Z")
+            + &call("2026-09-24T11:58:01.000Z", "c1", "exec_command", ESCALATED);
+        assert_eq!(
+            observe(&never, Some("on-request")).state,
+            RuntimeState::Working
+        );
+        // Granular policies serialize as an object.
+        let tail =
+            parse_rollout_tail(&(context(json!({"granular": {"sandbox_approval": true}})) + &body));
+        assert_eq!(tail.approval_policy.as_deref(), Some("granular"));
+    }
+
+    #[test]
+    fn a_yielded_code_mode_cell_keeps_waiting_for_its_approval() {
+        let input = r#"const r = await tools.exec_command({cmd:"ssh host 'ls'","sandbox_permissions":"require_escalated","justification":"Allow a read-only check on the server?"});"#;
+        let exec = started("2026-09-24T11:58:00.000Z")
+            + &line(
+                "2026-09-24T11:58:01.000Z",
+                "response_item",
+                json!({"type":"custom_tool_call","name":"exec","call_id":"e1","input": input}),
+            )
+            + &line(
+                "2026-09-24T11:58:11.000Z",
+                "response_item",
+                json!({"type":"custom_tool_call_output","call_id":"e1","output":"Script running with cell ID 7"}),
+            );
+        let polling = exec.clone()
+            + &call(
+                "2026-09-24T11:59:58.000Z",
+                "w1",
+                "wait",
+                r#"{"cell_id":"7","yield_time_ms":10000}"#,
+            );
+        let o = observe(&polling, Some("on-request"));
+        assert_eq!(
+            (o.state, o.confidence, o.detail.as_deref()),
+            (
+                RuntimeState::NeedsInput,
+                Confidence::Low,
+                Some("Allow a read-only check on the server?")
+            )
+        );
+        // Between two polls the cell is still running and still waiting.
+        let between = polling.clone()
+            + &output(
+                "2026-09-24T11:59:59.000Z",
+                "w1",
+                "Script running with cell ID 7",
+            );
+        assert_eq!(
+            observe(&between, Some("on-request")).state,
+            RuntimeState::NeedsInput
+        );
+        // The cell finished: back to work.
+        let finished = polling + &output("2026-09-24T11:59:59.000Z", "w1", "total 0");
+        assert_eq!(
+            observe(&finished, Some("on-request")).state,
+            RuntimeState::Working
+        );
+        // The model moved on to other work while the cell runs: that's work, not a wait.
+        let other = between
+            + &call(
+                "2026-09-24T11:59:59.500Z",
+                "c9",
+                "exec_command",
+                r#"{"cmd":"ls"}"#,
+            );
+        assert_eq!(
+            observe(&other, Some("on-request")).state,
+            RuntimeState::Working
         );
     }
 

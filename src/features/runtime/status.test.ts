@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { minutesAgo, NOW, rt, session } from "../../test/fixtures";
-import { countStatuses, isActive, needsYou, runtimeSummary, sortNeedsYou, statusKey } from "./status";
+import { countStatuses, isActive, needsYou, runtimeSummary, sortNeedsYou, statusKey, statusMeta } from "./status";
 
 describe("runtime status semantics", () => {
   it("Ready is never Needs You", () => {
@@ -14,6 +14,16 @@ describe("runtime status semantics", () => {
     expect(needsYou(session({ runtime: rt("needs_input") }))).toBe(true);
     expect(statusKey(session({ runtime: rt("error", { actionRequired: true }) }))).toBe("needs_you");
     expect(statusKey(session({ runtime: rt("error") }))).toBe("error");
+  });
+
+  it("an inferred approval is still Needs You, never Working", () => {
+    const approval = session({
+      provider: "codex",
+      runtime: rt("needs_input", { confidence: "low", source: "codex-rollout", reason: "Waiting for approval", actionRequired: true }),
+    });
+    expect(statusKey(approval)).toBe("needs_you");
+    expect(statusMeta(approval).label).toBe("Needs You");
+    expect(isActive(approval)).toBe(true);
   });
 
   it("sorts the inbox: blocking errors, then the longest wait first", () => {
