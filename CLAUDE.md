@@ -83,12 +83,13 @@ pnpm tauri build --debug --bundles app   # unsigned app build, same as CI
 It builds a release, quits the running Hoku, and replaces `/Applications/Hoku.app` on
 this machine. Don't run it as part of routine validation; use it only when the maintainer
 explicitly wants the installed app updated. Use `pnpm tauri dev` or the unsigned debug
-build above instead.
+build above instead. The same applies to `scripts/install.sh` (the release installer).
 
 ## Git workflow
 
 - Never commit or push directly to `main`; work on a branch and open a pull request.
 - Conventional Commits (`feat:`, `fix:`, `docs:`, `ci:`, `chore:`, `refactor:`, `test:`),
   short imperative lowercase summaries, one focused change per PR.
-- Don't push, tag, or create GitHub Releases unless asked.
+- Don't push, tag, or create GitHub Releases unless asked. Releases are cut from `v*` tags
+  on `main` by `.github/workflows/release.yml`; see [docs/releasing.md](docs/releasing.md).
 - Never commit signing certificates, API keys, `.env` files or `*.sqlite`/`*.db` files.
