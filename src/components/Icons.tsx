@@ -160,3 +160,17 @@ export const IconArchive = (p: P) => (
     <path d="M3.6 6.2v5.9a1 1 0 0 0 1 1h6.8a1 1 0 0 0 1-1V6.2M6.6 8.7h2.8" />
   </Svg>
 );
+/** Recaps: a card with a small constellation on it. */
+export const IconRecap = (p: P) => (
+  <Svg {...p}>
+    <rect x="2.4" y="3.2" width="11.2" height="9.6" rx="1.6" />
+    <circle cx="6" cy="7" r="0.9" fill="currentColor" stroke="none" />
+    <circle cx="10.2" cy="6.2" r="0.9" fill="currentColor" stroke="none" />
+    <path d="M6.8 6.8 9.4 6.4M5 10.4h6" strokeOpacity={0.6} />
+  </Svg>
+);
+export const IconDownload = (p: P) => (
+  <Svg {...p}>
+    <path d="M8 2.8v7M5 7l3 3 3-3M3.4 12.8h9.2" />
+  </Svg>
+);

@@ -73,6 +73,8 @@ download.
   session is waiting on), and metadata: working directory, file paths, branch, PR link,
   model and token count. Account labels can include the email `claude auth status` reports.
 - The index lives in `~/Library/Application Support/com.hoku.app/hub.sqlite`, on this Mac only.
+- Sharing a recap is always something you do: Hoku copies the image or text to the clipboard,
+  or saves a PNG to `~/Downloads`, and never posts or uploads anything.
 
 ## Using it
 
@@ -92,6 +94,7 @@ download.
 | **⌘K** | Search **all** sessions (including ones hidden from Current or by a filter), projects and actions. `↵` opens, `⌘↵` shows on map, `⌥↵` filters the Galaxy to its state, `⌘P` goes to its project, `⌘D` favorites, `⌘C` copies the ID. |
 | **Activity** | Cross-provider timeline of what started, finished, needed you or failed (Today / 7d / 30d). |
 | **Sessions** | The management table: search, sort, filter by project, provider, status, account, favorite, recency. |
+| **Recaps** | A shareable recap of a period (today, 7, 30 or 90 days) and some or all projects. Shows observed activity (active projects, sessions, days, provider mix, linked PRs) with its coverage, next to outcomes *you* write. Export a share card as a PNG or copy it, plus LinkedIn or Slack/Teams text. Public-safe by default: no account names, titles, IDs, paths, prompts, notes, PR links or unnamed projects. See [docs/recaps.md](docs/recaps.md). |
 | **Favorites / Projects** | Left rail drawers. Projects show compact runtime summaries ("1 needs you · 2 working"). |
 | **Scan** (⌘⇧S) | Discovers Claude Code, Codex and Cowork sessions and suggests projects from their folders. |
 | **Add session** (⌘N) | Paste a Claude link, a Codex thread ID or a Claude Code session ID. |

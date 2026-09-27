@@ -1,7 +1,7 @@
-import { openOverlay, showGalaxy, showSessions, toggleList } from "../app/actions";
+import { openOverlay, showGalaxy, showRecaps, showSessions, toggleList } from "../app/actions";
 import { useHub, type ListMode } from "../app/store";
 import { needsYou, ATTENTION } from "../features/runtime/status";
-import { IconActivity, IconGalaxy, IconInbox, IconList, IconOrbit, IconProjects, IconSettings, IconStar } from "./Icons";
+import { IconActivity, IconGalaxy, IconInbox, IconList, IconOrbit, IconProjects, IconRecap, IconSettings, IconStar } from "./Icons";
 
 function RailButton({ label, active, onClick, children, count }: { label: string; active?: boolean; onClick: () => void; children: React.ReactNode; count?: number }) {
   return (
@@ -63,6 +63,9 @@ export function Rail() {
       </RailButton>
       <RailButton label="Sessions" active={view === "sessions"} onClick={showSessions}>
         <IconList />
+      </RailButton>
+      <RailButton label="Recaps" active={view === "recaps"} onClick={showRecaps}>
+        <IconRecap />
       </RailButton>
       <div className="flex-1" />
       <div className="mb-1 h-px w-6 bg-line" />

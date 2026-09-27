@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { closeOverlay, copy, focusProject, openOverlay, openSession, quickFilter, revealSession, scan, setStatusFilter, showSessions, toggleFavorite, toggleList } from "../../app/actions";
+import { closeOverlay, copy, focusProject, openOverlay, openRecaps, openSession, quickFilter, revealSession, scan, setStatusFilter, showSessions, toggleFavorite, toggleList } from "../../app/actions";
 import { UNSORTED } from "../../app/model";
 import { useHub } from "../../app/store";
 import { basename } from "../../lib/paths";
@@ -25,6 +25,7 @@ const ACTIONS: Omit<Extract<Item, { kind: "action" }>, "kind">[] = [
   { id: "a:needs", label: "Show Needs You", hint: "Sessions waiting on you", keywords: "needs you inbox waiting permission approval question attention", run: () => toggleList("needs") },
   { id: "a:activity", label: "Show Activity", hint: "Cross-provider timeline", keywords: "activity timeline recent history events finished", run: () => toggleList("activity") },
   { id: "a:sessions", label: "Show Sessions", hint: "Sortable, filterable list", keywords: "sessions list table manage filter", run: () => showSessions() },
+  { id: "a:recaps", label: "Show Recaps", hint: "Shareable project and work recap", keywords: "recap insights analytics share linkedin slack teams summary week month outcomes", run: () => openRecaps() },
   { id: "a:filter-needs", label: "Filter Galaxy: Needs You", keywords: "filter galaxy needs you waiting status", run: () => quickFilter("needs_you") },
   { id: "a:filter-working", label: "Filter Galaxy: Working", keywords: "filter galaxy working active running live status", run: () => quickFilter("working") },
   { id: "a:filter-clear", label: "Clear status filter", keywords: "clear filter status reset all", run: () => setStatusFilter([]) },

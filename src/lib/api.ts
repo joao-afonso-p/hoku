@@ -3,12 +3,16 @@ import type {
   HubError,
   HubSnapshot,
   OpenResult,
+  Outcome,
+  OutcomeInput,
   ParsedReference,
   Project,
   ProjectSuggestion,
   Provider,
   ProviderAccount,
   ProviderGroup,
+  Recap,
+  RecapQuery,
   ScanReport,
   Session,
 } from "./types";
@@ -19,7 +23,7 @@ export function toHubError(e: unknown): HubError {
   return { message: "Something went wrong.", detail: String(e) };
 }
 
-async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+async function call<T>(cmd: string, args?: Record<string, unknown> | Uint8Array): Promise<T> {
   try {
     return await invoke<T>(cmd, args);
   } catch (e) {
@@ -74,6 +78,14 @@ export const api = {
   openSpacesSettings: () => call<void>("open_spaces_settings"),
   revealPath: (path: string) => call<void>("reveal_path", { path }),
   openProviderApp: (app: "claude" | "codex") => call<void>("open_provider_app", { app }),
+
+  recap: (query: RecapQuery) => call<Recap>("get_recap", { query }),
+  createOutcome: (input: OutcomeInput) => call<Outcome>("create_outcome", { input }),
+  updateOutcome: (id: string, input: OutcomeInput) => call<Outcome>("update_outcome", { id, input }),
+  deleteOutcome: (id: string) => call<void>("delete_outcome", { id }),
+  /** The PNG travels as the raw request body. Returns the saved file's path. */
+  saveRecapImage: (png: Uint8Array) => call<string>("save_recap_image", png),
+  copyRecapImage: (png: Uint8Array) => call<void>("copy_recap_image", png),
 
   scan: (adapters?: string[]) => call<ScanReport>("scan_sessions", { adapters: adapters ?? null }),
   refreshRuntime: () => call<boolean>("refresh_runtime"),

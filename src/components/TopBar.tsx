@@ -73,10 +73,10 @@ export function TopBar({ systems }: { systems: SystemModel[] }) {
           <span data-tauri-drag-region className="flex items-center gap-2">
             <img src={mark} alt="" className="pointer-events-none h-[22px] w-[22px]" draggable={false} />
             <span className="text-[13px] font-semibold tracking-[0.02em] text-ink">Hoku</span>
-            {view === "sessions" && (
+            {(view === "sessions" || view === "recaps") && (
               <>
                 <span className="text-ink-4">/</span>
-                <span className="text-[12.5px] font-semibold tracking-[0.12em] text-ink uppercase">Sessions</span>
+                <span className="text-[12.5px] font-semibold tracking-[0.12em] text-ink uppercase">{view === "sessions" ? "Sessions" : "Recaps"}</span>
               </>
             )}
           </span>
