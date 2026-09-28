@@ -1,0 +1,90 @@
+# User documentation for Hoku, published to GitHub Pages:
+#   https://joao-afonso-p.github.io/hoku/
+#
+# The site is an Astro + Starlight project in site/, with its own package.json and lockfile.
+# It never builds or touches the app: nothing here runs Tauri, Rust or the app's Vite build.
+#
+# Triggers:
+#   - pull requests that touch the site or its screenshots: build and check only (type check,
+#     every internal link and anchor), never deploy
+#   - pushes to main that touch the same paths, and manual runs from main: build and deploy
+#
+# One-time setup: Settings → Pages → Build and deployment → Source: GitHub Actions.
+# See site/README.md.
+
+name: Docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "docs/images/**"
+      - "src/assets/hoku-mark-96.png"
+      - ".github/workflows/docs.yml"
+  pull_request:
+    paths:
+      - "site/**"
+      - "docs/images/**"
+      - "src/assets/hoku-mark-96.png"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deployment at a time. A deployment in progress is never cancelled halfway.
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build the documentation site
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Full history, for the "Last updated" date on each page.
+          fetch-depth: 0
+
+      # pnpm version comes from the `packageManager` field in site/package.json.
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: site/package.json
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - run: pnpm install --frozen-lockfile
+
+      # astro check, then astro build. starlight-links-validator fails the build on any
+      # broken internal link or anchor. Output goes to site/dist, under the /hoku/ base.
+      - run: pnpm build
+
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        with:
+          path: site/dist
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write # deploy to Pages
+      id-token: write # verify the deployment's origin
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
