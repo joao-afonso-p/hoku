@@ -281,17 +281,24 @@ export async function toggleFollowUp(s: Session) {
   else await followUp(s);
 }
 
-export async function removeSession(s: Session) {
+/**
+ * Forget Hoku's record of a session; the provider's copy is never touched. With `nextStep`, the
+ * note is saved to the project first, and nothing is forgotten if that save fails.
+ */
+export async function forgetSession(s: Session, nextStep?: string) {
+  let kept = false;
   try {
+    if (nextStep && s.projectId) {
+      await api.updateProjectResume(s.projectId, { nextStep });
+      kept = true;
+    }
     await api.deleteSession(s.id);
     select(null);
     await reload();
-    toast({
-      tone: "info",
-      message: s.discovery === "scan" ? "Removed. It will return on the next scan." : "Session removed",
-    });
+    toast({ tone: "info", message: kept ? "Forgotten in Hoku · note kept as next step" : "Forgotten in Hoku" });
   } catch (e) {
     fail(e);
+    if (kept) await reload();
   }
 }
 

@@ -1639,6 +1639,38 @@ mod tests {
     }
 
     #[test]
+    fn forgetting_a_session_keeps_the_next_step_saved_from_its_note() {
+        let c = open_in_memory();
+        let p = project(&c, "Atlas", Some("/u/atlas"));
+        let d = DiscoveredSession {
+            external_id: "x".into(),
+            title: "t".into(),
+            working_directory: Some("/u/atlas".into()),
+            ..Default::default()
+        };
+        upsert_discovered(
+            &c,
+            Provider::Codex,
+            "codex-state-db",
+            &d,
+            Some(p.id.clone()),
+            None,
+        )
+        .unwrap();
+        let s = find_session_by_external(&c, Provider::Codex, "x")
+            .unwrap()
+            .unwrap();
+        // The inspector saves the note as the next step, then forgets the session.
+        let kept = update_project_resume(&c, &p.id, None, Some(Some("Ship the migration".into())))
+            .unwrap();
+        delete_session(&c, &s.id).unwrap();
+        let after = get_project(&c, &p.id).unwrap().unwrap();
+        assert!(get_session(&c, &s.id).unwrap().is_none());
+        assert_eq!(after.next_step.as_deref(), Some("Ship the migration"));
+        assert_eq!(after.resume_updated_at, kept.resume_updated_at);
+    }
+
+    #[test]
     fn duplicate_manual_add_is_rejected() {
         let c = open_in_memory();
         let input = || ManualSessionInput {
