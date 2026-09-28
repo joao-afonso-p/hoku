@@ -5,6 +5,7 @@
 //! Runs on its own thread every [`TICK`]. Provider probes happen without the hub DB lock; the
 //! lock is taken briefly to read sessions and again to write what changed.
 
+use crate::attention;
 use crate::db;
 use crate::models::*;
 use crate::providers::{Observation, RuntimeTarget, SessionAdapter};
@@ -395,11 +396,21 @@ pub fn tick(
     out
 }
 
-/// Where transitions leave the monitor. Today: a UI event. This is the single place to add
-/// macOS notifications later (Needs You / Error / optionally Ready).
-fn announce(app: &tauri::AppHandle, outcome: &TickOutcome) {
+/// Where transitions leave the monitor, after every pass: a UI event when something changed,
+/// then the Needs You alerts outside the window (banners, Dock badge, bounce). The alerts diff
+/// the whole Needs You set rather than these transitions, so sessions that change through
+/// other paths (a scan, a deletion, demo data) are counted too. See attention.rs.
+fn announce(
+    app: &tauri::AppHandle,
+    outcome: &TickOutcome,
+    db: &Mutex<Connection>,
+    attention: &Mutex<attention::Tracker>,
+) {
     use tauri::Emitter;
-    let _ = app.emit("hub://runtime", outcome);
+    if outcome.changed {
+        let _ = app.emit("hub://runtime", outcome);
+    }
+    attention::reconcile(app, db, attention);
 }
 
 pub fn start(
@@ -407,6 +418,7 @@ pub fn start(
     db: Arc<Mutex<Connection>>,
     adapters: Arc<Vec<Box<dyn SessionAdapter>>>,
     state: Arc<Mutex<MonitorState>>,
+    attention: Arc<Mutex<attention::Tracker>>,
 ) {
     std::thread::Builder::new()
         .name("hoku-runtime".into())
@@ -415,9 +427,7 @@ pub fn start(
                 let mut st = state.lock().expect("monitor");
                 tick(&db, &adapters, &mut st)
             };
-            if outcome.changed {
-                announce(&app, &outcome);
-            }
+            announce(&app, &outcome, &db, &attention);
             std::thread::sleep(TICK);
         })
         .expect("runtime monitor thread");

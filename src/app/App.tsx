@@ -19,7 +19,7 @@ import { SettingsSheet } from "../features/settings/SettingsSheet";
 import { SpacesHelpSheet } from "../features/sessions/SpacesHelpSheet";
 import { ageMs } from "../lib/time";
 import { isSessionVisible, visibilityFromSettings } from "../features/galaxy/visibility";
-import { setVisibility, showGalaxy, closeOverlay, copy, escape, focusProject, openOverlay, openSession, patchSession, reload, scan, select, startRuntimeUpdates, toast } from "./actions";
+import { setVisibility, showGalaxy, closeOverlay, copy, escape, focusProject, openOverlay, openSession, patchSession, reload, scan, select, startNotificationClicks, startRuntimeUpdates, toast } from "./actions";
 import { UNSORTED, useSession, useSystems, useVisibility } from "./model";
 import { getState, useHub } from "./store";
 
@@ -46,6 +46,7 @@ export function App() {
   useEffect(() => {
     void reload();
     startRuntimeUpdates();
+    startNotificationClicks();
   }, []);
 
   useGlobalKeys(systems.map((s) => s.key));

@@ -392,6 +392,39 @@ pub fn get_session(conn: &Connection, id: &str) -> rusqlite::Result<Option<Sessi
         .optional()
 }
 
+/// A session that needs a human now, with only what an alert may show about it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NeedsYouRow {
+    pub session_id: String,
+    pub provider: Provider,
+    pub project: Option<String>,
+    pub state: RuntimeState,
+    pub reason: Option<String>,
+    pub demo: bool,
+}
+
+/// Every session that needs you: `needs_input`, or an error that needs a human. The same rule
+/// as `needsYou()` in src/features/runtime/status.ts, so the Dock and the sidebar agree.
+pub fn needs_you_sessions(conn: &Connection) -> rusqlite::Result<Vec<NeedsYouRow>> {
+    let mut st = conn.prepare(
+        "SELECT s.id, s.provider, p.name, s.runtime_state, s.runtime_reason, s.source
+           FROM sessions s LEFT JOIN projects p ON p.id = s.project_id
+          WHERE s.runtime_state = 'needs_input'
+             OR (s.runtime_state = 'error' AND s.runtime_action = 1)",
+    )?;
+    let rows = st.query_map([], |r| {
+        Ok(NeedsYouRow {
+            session_id: r.get(0)?,
+            provider: Provider::parse(&r.get::<_, String>(1)?).unwrap_or(Provider::Claude),
+            project: r.get(2)?,
+            state: RuntimeState::parse(&r.get::<_, String>(3)?),
+            reason: r.get(4)?,
+            demo: r.get::<_, Option<String>>(5)?.as_deref() == Some("demo"),
+        })
+    })?;
+    rows.collect()
+}
+
 pub fn find_session_by_external(
     conn: &Connection,
     provider: Provider,

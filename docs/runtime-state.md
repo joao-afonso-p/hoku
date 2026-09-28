@@ -123,9 +123,9 @@ parsing debug traces is brittle. The rollout already holds the pending escalated
    runs an adapter-scoped discovery. Attempts are throttled to 8 s per adapter and 15 s per
    session.
 
-`announce()` is the single place where transitions leave the monitor. macOS notifications
-(Needs You, Error, optionally Ready) belong there later. Every transition already carries
-`from`, `to`, the event type and `actionRequired`.
+`announce()` is the single place where transitions leave the monitor: the `hub://runtime` UI
+event, then the Needs You alerts outside the window (see
+[Notifications and the Dock](#notifications-and-the-dock)).
 
 ### Watchdog defaults
 
@@ -138,6 +138,68 @@ parsing debug traces is brittle. The rollout already holds the pending escalated
 
 Nothing flips on a single missing observation. A state changes only when a provider reports
 something different or a watchdog threshold passes.
+
+## Notifications and the Dock
+
+Code: `src-tauri/src/attention.rs` (decisions, AppKit/UserNotifications bridge),
+`src/features/notifications/notifications.ts` (preferences, click destination), the
+*Needs You alerts* section of Settings.
+
+After every monitor pass (and when the window regains focus, or a notification preference
+changes) Hoku compares the set of sessions that need you (the `needsYou()` rule, read from the
+index) with the previous pass. Comparing the whole set, not only the monitor's transitions,
+also covers sessions that appear or vanish through a scan, a deletion or demo data.
+
+| | Default | What it does |
+|---|---|---|
+| **Dock badge** | on | The Dock icon shows the number of sessions that need you, the same count as the sidebar badge (demo sessions included). It updates on the pass that resolves a session, and clears at 0. The icon art is never changed. |
+| **Notifications** | off | A banner when a session **starts** needing you: `needs_input`, or an error with `actionRequired` (authentication, billing). Ready, ordinary errors and anything else never alert. |
+| **Dock bounce** | off | One informational bounce (never the repeating critical kind) for the same moments. Cancelled when nothing needs you any more or Hoku comes forward. |
+
+Rules that keep it quiet:
+
+- **Once per episode.** A session alerts when it enters Needs You. Staying there, a changed
+  reason, and every 4 s re-observation are silent. Leaving it withdraws the delivered banner
+  from Notification Center.
+- **Flapping.** Coming back into Needs You within 60 s of leaving it doesn't alert again
+  (it's usually someone already answering prompts at the terminal).
+- **No backlog.** The first pass after launch sets the Dock count and alerts about nothing.
+  It also withdraws banners a previous run left behind for sessions answered since.
+- **Bursts.** More than 3 sessions starting to need you in one pass become one "N sessions
+  need you" banner.
+- **Not while you're looking.** No banner or bounce while Hoku's window is focused and visible.
+  If it's minimized, hidden or behind another app, alerts go ahead.
+- **Demo sessions** are counted on the badge but never alert.
+
+A banner can appear on the lock screen, so it carries only the project name as its title and
+`<provider> · <kind of request>` as its body ("Claude Code · Waiting for permission", "Codex
+stopped · Authentication required"). The kind is one of the adapters' fixed phrases; anything
+else becomes "Waiting for you" or "Needs your attention". It never includes the session title,
+prompt, runtime detail, path or account. It uses the default sound and a normal interruption
+level, so Focus and the per-app settings in System Settings → Notifications apply.
+
+**Clicking a banner** brings Hoku forward (this is the only time an alert brings it forward),
+restoring a minimized or hidden window, and shows that exact session in the Galaxy with the
+inspector open, using the same reveal as ⌘K: a hidden session is shown, an archived project
+says so. Nothing is opened in the provider until you use the inspector's open action (**Go to
+terminal**, **Open thread in Codex**, …). A session
+that no longer exists, or the summary banner, opens the Needs You inbox. When a click launches
+Hoku, the target is kept until the UI has loaded.
+
+**Permission.** macOS asks the first time notifications (or the badge) are turned on in
+Settings, never at launch. If it's denied, or alerts or badges are turned off for Hoku in
+System Settings, Settings says so and links to Hoku's Notifications pane. Whether macOS shows
+the Dock count can depend on the "Badge application icon" setting there.
+
+**Limits.** Notifications are local: Hoku posts them itself, so none arrive while Hoku isn't
+running, and nothing is pushed from anywhere. Unbundled builds (`pnpm tauri dev`) can't use the
+notification center, so only the badge and bounce work there. Settings says "This build can't
+post notifications".
+
+**Threads.** The decision (`Tracker::step`) is pure and runs on the monitor thread with no lock
+held while waiting on the UI. Every AppKit and UserNotifications call is dispatched to the
+main thread. The notification delegate may be called on any thread and only records the
+click, restores the window through Tauri and emits `hub://notification`.
 
 ## Activity events
 

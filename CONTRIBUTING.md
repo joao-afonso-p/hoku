@@ -70,6 +70,7 @@ src-tauri/src/            Rust: all I/O
   providers/              one adapter per provider source (read-only)
   scan.rs                 runs adapters, merges results into the hub DB
   runtime.rs              runtime monitor (4 s tick, watchdog, activity events)
+  attention.rs            Needs You notifications, Dock badge and bounce
   launch.rs               opening sessions: deep links, terminals via AppleScript
   integrations.rs         installed apps/CLIs, sign-in status, capability table
   db.rs                   Hoku's own SQLite: schema, migrations, merge rules

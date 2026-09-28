@@ -81,6 +81,7 @@ download.
 | **Galaxy** | Every project is a star system. Sessions orbit it: angle = provider, distance = relevance (needs you → working → ready → recent → older). A warm halo means it needs you, a breathing one that it's working. |
 | **Runtime state** | Every session is *working*, *needs input*, *ready*, *idle*, *offline*, *error* or *unknown*, with a confidence level. See [docs/runtime-state.md](docs/runtime-state.md). |
 | **Needs You** (badge) | The inbox for sessions waiting on you: permissions, questions, confirmations, auth failures. Oldest wait first. Finished sessions are *Ready* and never land here. |
+| **Needs You alerts** | *Settings → Needs You alerts*. The Dock icon shows how many sessions need you (on by default). Optionally, a macOS notification when a session starts needing you, and one Dock bounce (both off by default). Alerts come only while Hoku runs and isn't in front, name only the project and the kind of request, and clicking one shows that session in Hoku without opening anything. See [docs/runtime-state.md](docs/runtime-state.md#notifications-and-the-dock). |
 | **Status filters** | Galaxy quick filters `Needs You` / `Working` plus a multi-select `Status ▾`. Non-matching sessions fade in place, so nothing moves. |
 | **Current \| All** (⌘⇧A) | **Current** (default) shows what you're working on: live sessions, favorites, and anything active in the last 7 days (3/7/14/30 in Settings). **All** shows the full archive. Each project shows "N current · M total". |
 | **+N older** | In a project, temporarily reveal its older sessions without switching to All. |
@@ -131,6 +132,9 @@ Account state comes from `claude auth status` (email, org, plan) and `codex logi
   (escalated commands, permission requests, questions, any command under `untrusted`), and
   marks them as inferred. See docs/runtime-state.md. Cowork and Claude chats expose no turn state, so they
   never appear in Needs You.
+- Needs You notifications are posted by Hoku itself, so they only arrive while Hoku is
+  running. They follow macOS permission, Focus and notification settings, and aren't
+  available in unbundled `pnpm tauri dev` builds.
 
 ## Running
 

@@ -590,6 +590,14 @@ pub fn open_spaces_settings() -> Result<(), String> {
     .map(|_| ())
 }
 
+/// Hoku's own pane in System Settings → Notifications (a fixed URL, no input).
+pub fn open_notification_settings() -> Result<(), String> {
+    run(Command::new("/usr/bin/open").arg(
+        "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=com.hoku.app",
+    ))
+    .map(|_| ())
+}
+
 /// Bring a terminal window to the current Space: macOS restores a minimized window onto the
 /// Space you're on. Used only when the window is on another desktop and macOS is set not to
 /// switch desktops on activation (System Settings → Desktop & Dock → Mission Control).

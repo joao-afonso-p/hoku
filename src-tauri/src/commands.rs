@@ -1,5 +1,6 @@
 //! IPC surface. Thin: validate, delegate to db / scan / launch, map errors to HubError.
 
+use crate::attention;
 use crate::db::{self, ManualSessionInput, ProjectInput, SessionPatch};
 use crate::integrations;
 use crate::launch::{self, LaunchContext, OpenResult};
@@ -17,6 +18,7 @@ pub struct AppState {
     pub db: Arc<Mutex<Connection>>,
     pub adapters: Arc<Vec<Box<dyn SessionAdapter>>>,
     pub monitor: Arc<Mutex<MonitorState>>,
+    pub attention: Arc<Mutex<attention::Tracker>>,
     pub claude_home: std::path::PathBuf,
 }
 
@@ -480,13 +482,19 @@ pub async fn scan_sessions(state: Db<'_>, adapters: Option<Vec<String>>) -> HubR
 }
 
 /// Run one runtime pass now (window regained focus). Returns true if anything changed.
+/// Also settles the Dock: Hoku is in front now, so a pending bounce stops.
 #[tauri::command]
-pub async fn refresh_runtime(state: Db<'_>) -> HubResult<bool> {
+pub async fn refresh_runtime(app: tauri::AppHandle, state: Db<'_>) -> HubResult<bool> {
     let dbh = state.db.clone();
     let all = state.adapters.clone();
     let monitor = state.monitor.clone();
-    blocking(move || Ok(runtime::tick(&dbh, &all, &mut monitor.lock().expect("monitor")).changed))
-        .await
+    let tracker = state.attention.clone();
+    blocking(move || {
+        let changed = runtime::tick(&dbh, &all, &mut monitor.lock().expect("monitor")).changed;
+        attention::reconcile(&app, &dbh, &tracker);
+        Ok(changed)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -508,8 +516,43 @@ pub fn rename_account(state: Db, id: String, label: String) -> HubResult<()> {
 }
 
 #[tauri::command]
-pub fn set_setting(state: Db, key: String, value: Value) -> HubResult<()> {
-    Ok(db::set_setting(&lock(&state), &key, &value)?)
+pub fn set_setting(app: tauri::AppHandle, state: Db, key: String, value: Value) -> HubResult<()> {
+    db::set_setting(&lock(&state), &key, &value)?;
+    // A notification preference applies now (e.g. the Dock badge clears), not on the next tick.
+    if key.starts_with("notifications.") {
+        let (dbh, tracker) = (state.db.clone(), state.attention.clone());
+        tauri::async_runtime::spawn_blocking(move || {
+            if tracker.lock().map(|t| t.primed()).unwrap_or(false) {
+                attention::reconcile(&app, &dbh, &tracker);
+            }
+        });
+    }
+    Ok(())
+}
+
+// ───────────────────────────── notifications ─────────────────────────────
+
+#[tauri::command]
+pub async fn notification_status() -> HubResult<attention::NotificationStatus> {
+    blocking(|| Ok(attention::status())).await
+}
+
+/// macOS prompts only the first time; afterwards this just reports the current answer.
+#[tauri::command]
+pub async fn request_notification_permission() -> HubResult<attention::NotificationStatus> {
+    blocking(|| Ok(attention::request_permission())).await
+}
+
+#[tauri::command]
+pub fn open_notification_settings() -> HubResult<()> {
+    launch::open_notification_settings()
+        .map_err(|e| HubError::with_detail("System Settings couldn't be opened.", e))
+}
+
+/// The banner the user last clicked, once. `None` when there is nothing to follow.
+#[tauri::command]
+pub fn take_notification_target() -> Option<attention::Target> {
+    attention::take_target()
 }
 
 #[tauri::command]

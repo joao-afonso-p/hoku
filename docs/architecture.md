@@ -20,6 +20,7 @@ small typed IPC surface.
 │ db.rs           our SQLite: schema, migrations, CRUD, upsert │
 │ scan.rs         run adapters, merge, suggestions             │
 │ runtime.rs      runtime monitor: state, watchdog, events     │
+│ attention.rs    Needs You banners, Dock badge and bounce     │
 │ association.rs  cwd/repo → project; git worktree resolution  │
 │ providers/      claude_code · codex · claude_desktop (+text) │
 │ launch.rs       terminals (AppleScript), deep links, pbcopy  │
@@ -42,7 +43,7 @@ on first launch; the old file is left as a backup. Migrations are an ordered lis
 | `activity_events` | semantic runtime transitions for the Activity timeline (90 days) |
 | `session_links` | optional undirected relationships |
 | `scan_runs` | per-adapter scan history (for "last scan") |
-| `settings` | key → JSON (terminal preference, first-scan flag) |
+| `settings` | key → JSON (terminal preference, first-scan flag, `notifications.*` alert preferences) |
 
 ### Merge rules (`db::upsert_discovered`)
 
@@ -105,6 +106,9 @@ frontend the `Provider` union (`src/lib/types.ts`), its descriptor and `ADAPTER_
   reloads on that event. There's no UI polling. Regaining focus runs an immediate pass. New
   live sessions trigger an adapter-scoped discovery. Full scans stay manual (⌘⇧S). See
   [runtime-state.md](runtime-state.md).
+- After each pass `attention.rs` decides the Needs You alerts (notification banners, Dock
+  badge, Dock bounce) on the monitor thread and dispatches the AppKit/UserNotifications calls
+  to the main thread. See [runtime-state.md](runtime-state.md#notifications-and-the-dock).
 - The constellation re-renders in screen space. Layouts are memoized per data change and
   per minute, and the camera animates with `requestAnimationFrame`.
 

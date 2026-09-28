@@ -1,9 +1,10 @@
 import { listen } from "@tauri-apps/api/event";
 import { isSessionVisible, visibilityFromSettings, VISIBILITY_KEYS, type GalaxyVisibility } from "../features/galaxy/visibility";
+import { notificationDestination } from "../features/notifications/notifications";
 import type { StatusKey } from "../features/runtime/status";
 import type { SessionFilter } from "../features/sessions/filter";
 import { api, type ProjectPatch, type SessionPatch } from "../lib/api";
-import type { HubError, Session } from "../lib/types";
+import type { HubError, NotificationTarget, Session } from "../lib/types";
 import { getState, setState, type ListMode, type Overlay, type Toast } from "./store";
 
 /** Settings key: when the Activity timeline was last looked at ("N finished since"). */
@@ -113,6 +114,40 @@ export function revealSession(session: Session) {
   const v = visibilityFromSettings(s.data.settings);
   const hidden = !isSessionVisible(session, v);
   setState({ focus: key, list: null, view: "galaxy", statusFilter: [], expanded: hidden ? key : s.expanded === key ? key : null, selectedId: session.id });
+}
+
+/**
+ * A clicked Needs You banner (src-tauri/src/attention.rs): go to that exact session, even one
+ * the Galaxy hides, and select it so its Open button is right there. Nothing opens by itself.
+ * A session that's gone leads to the Needs You inbox instead.
+ */
+export async function followNotification() {
+  let target: NotificationTarget | null;
+  try {
+    target = await api.takeNotificationTarget();
+  } catch {
+    return; /* not running inside Tauri (e.g. tests) */
+  }
+  if (!target) return;
+  await reload();
+  const dest = notificationDestination(target, getState().data.sessions);
+  setState({ overlay: null });
+  if (dest.kind === "session") return revealSession(dest.session);
+  setState({ view: "galaxy", list: "needs", selectedId: null });
+  if (dest.missing) toast({ tone: "info", message: "That session is no longer in Hoku. Here’s what still needs you." });
+}
+
+let notificationsStarted = false;
+
+/** The backend emits `hub://notification` when a banner is clicked. */
+export function startNotificationClicks() {
+  if (notificationsStarted) return;
+  notificationsStarted = true;
+  void listen("hub://notification", () => void followNotification()).catch(() => {
+    /* not running inside Tauri (e.g. tests) */
+  });
+  // A click that launched Hoku arrived before anything could listen.
+  void followNotification();
 }
 
 export async function setVisibility(patch: Partial<GalaxyVisibility>) {
