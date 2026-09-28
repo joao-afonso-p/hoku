@@ -51,7 +51,7 @@ and type in SQL, so a busy period is counted completely.
 
 ## Outcomes
 
-Outcomes live in Hoku's own database (`recap_outcomes`, migration v4): up to 140
+Outcomes live in Hoku's own database (`recap_outcomes`, migration v5): up to 140
 characters, a local date and an optional project. They're listed in every recap whose
 period and projects include them. **None of them is on the card or in the post text until
 you tick it.** Hoku never ticks one for you: not a new one, not the most recent ones. The

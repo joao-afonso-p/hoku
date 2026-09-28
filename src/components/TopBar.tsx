@@ -1,10 +1,10 @@
 import { useMemo } from "react";
-import { ACTIVITY_SEEN_KEY, focusProject, openOverlay, scan, toggleExpanded, toggleList } from "../app/actions";
+import { ACTIVITY_SEEN_KEY, focusProject, openOverlay, scan, toggleExpanded, toggleList, toggleResume } from "../app/actions";
 import { useVisibility, type SystemModel } from "../app/model";
 import { useHub } from "../app/store";
 import mark from "../assets/hoku-mark-96.png";
 import { ageMs, DURATION, relativeTime } from "../lib/time";
-import { IconChevronLeft, IconPlus, IconScan, IconSearch } from "./Icons";
+import { IconChevronLeft, IconPlus, IconResume, IconScan, IconSearch } from "./Icons";
 import { countLabel } from "../features/constellation/Constellation";
 import { runtimeSummary } from "../features/runtime/status";
 import { RuntimeSummaryText, StatusDot } from "../features/runtime/StatusMark";
@@ -25,6 +25,7 @@ export function useFinishedSince(): number {
 export function TopBar({ systems }: { systems: SystemModel[] }) {
   const focus = useHub((s) => s.focus);
   const view = useHub((s) => s.view);
+  const list = useHub((s) => s.list);
   const sessions = useHub((s) => s.data.sessions);
   const lastScans = useHub((s) => s.data.lastScans);
   const scanning = useHub((s) => s.scanning);
@@ -61,6 +62,16 @@ export function TopBar({ systems }: { systems: SystemModel[] }) {
                 title="Temporarily show this project's older sessions"
               >
                 {focused.expanded ? "Hide older" : `+${focused.counts.older} older`}
+              </button>
+            )}
+            {focused.project && (
+              <button
+                className={`btn h-6 px-2 text-[11.5px] ${list === "resume" ? "bg-white/[0.08] text-ink" : ""}`}
+                onClick={() => toggleResume(focused.project!.id)}
+                aria-pressed={list === "resume"}
+                title="Resume: what this project is, what changed, what needs you, where to continue (R)"
+              >
+                <IconResume size={13} /> Resume
               </button>
             )}
             {focused.project && (

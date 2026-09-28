@@ -69,6 +69,11 @@ export interface Project {
   isDemo: boolean;
   /** Archived: off the Galaxy, still searchable, restorable in place. */
   archivedAt?: string | null;
+  /** Project Resume: what this project is, in the user's words (or an accepted AI draft). */
+  description?: string | null;
+  /** Project Resume: where to pick up next. */
+  nextStep?: string | null;
+  resumeUpdatedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -316,4 +321,36 @@ export interface Recap {
   pullRequests: RecapPullRequest[];
   outcomes: Outcome[];
   coverage: RecapCoverage;
+}
+
+/** The optional AI draft provider (src-tauri/src/resume.rs). */
+export interface DraftProviderStatus {
+  provider: "claude-code";
+  /** The user turned drafts on in Settings. Off by default. */
+  enabled: boolean;
+  installed: boolean;
+  version?: string | null;
+  /** null when the CLI's status couldn't be read. */
+  signedIn?: boolean | null;
+  /** The CLI supports every flag Hoku needs for a tool-less, session-less run. */
+  supported: boolean;
+  missingFlags: string[];
+}
+
+/** Exactly what Generate would send, for the user to inspect first. */
+export interface PreparedDraft {
+  token: string;
+  systemPrompt: string;
+  prompt: string;
+  sessionCount: number;
+  eventCount: number;
+  noteCount: number;
+  hasDescription: boolean;
+  hasNextStep: boolean;
+}
+
+/** An unsaved, editable draft. */
+export interface ResumeDraft {
+  description?: string | null;
+  nextStep?: string | null;
 }

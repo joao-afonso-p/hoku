@@ -8,6 +8,9 @@ import { useHub } from "../../app/store";
 import { Sheet } from "../../components/Sheet";
 import { api } from "../../lib/api";
 import { tildify } from "../../lib/paths";
+import type { DraftProviderStatus } from "../../lib/types";
+import { AI_DRAFTS_KEY } from "../resume/ResumeDrawer";
+import { HOW_IT_RUNS, NEVER_SENT, SENT_CATEGORIES } from "../resume/privacy";
 
 const TERMINALS = [
   { id: "auto", label: "Automatic", hint: "iTerm if installed" },
@@ -116,6 +119,8 @@ export function SettingsSheet() {
           </p>
         </section>
 
+        <AiDraftsSection />
+
         <section>
           <div className="eyebrow mb-2">Privacy</div>
           <ul className="space-y-1 text-[12px] leading-relaxed text-ink-3">
@@ -123,6 +128,7 @@ export function SettingsSheet() {
             <li>Claude and Codex data is read-only. Their files and databases are never modified.</li>
             <li>No passwords or tokens are read or stored. Sign-in stays with each provider’s app.</li>
             <li>Only titles and a short first-prompt preview are indexed, never full transcripts.</li>
+            <li>AI drafts are off unless you turn them on above, and only send when you click Generate draft.</li>
           </ul>
           {dbPath && (
             <div className="mt-2 text-[11.5px] text-ink-4">
@@ -159,6 +165,7 @@ export function SettingsSheet() {
               ["⌘ 1–9", "Jump to project"],
               ["Esc", "Back out one level"],
               ["⌘ 0", "Galaxy view"],
+              ["R", "Project Resume"],
               ["⌘ ⇧ A", "Current / All"],
             ].map(([k, v]) => (
               <div key={k} className="flex items-center justify-between">
@@ -193,5 +200,92 @@ function Toggle({ label, checked, onChange }: { label: string; checked: boolean;
         <span className={`absolute top-[2px] h-[14px] w-[14px] rounded-full bg-void transition-[left] ${checked ? "left-[14px]" : "left-[2px]"}`} />
       </button>
     </label>
+  );
+}
+
+/**
+ * Optional AI drafts for Project Resume. Off by default. Turning it on shows exactly which data
+ * categories a draft sends; nothing is sent until Generate draft is clicked in a Resume.
+ */
+function AiDraftsSection() {
+  const enabled = useHub((s) => s.data.settings[AI_DRAFTS_KEY] === "claude-code");
+  const [status, setStatus] = useState<DraftProviderStatus | null>(null);
+  const [checking, setChecking] = useState(true);
+  const [confirming, setConfirming] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .aiDraftStatus()
+      .then((s) => alive && setStatus(s))
+      .catch(() => alive && setStatus(null))
+      .finally(() => alive && setChecking(false));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const set = async (on: boolean) => {
+    try {
+      await api.setSetting(AI_DRAFTS_KEY, on ? "claude-code" : "off");
+      await reload();
+      setConfirming(false);
+      toast({ tone: "info", message: on ? "AI drafts on. Nothing is sent until you click Generate draft." : "AI drafts off" });
+    } catch (e) {
+      fail(e);
+    }
+  };
+
+  const usable = !!status?.installed && status.supported;
+  const cli = checking
+    ? "Checking Claude Code…"
+    : !status?.installed
+      ? "Claude Code CLI not found. Install it to use AI drafts."
+      : !status.supported
+        ? `Claude Code ${status.version ?? ""} is too old for safe drafts (missing ${status.missingFlags.join(", ")}). Update it to use AI drafts.`
+        : `Claude Code ${status.version ?? ""} · ${status.signedIn === true ? "signed in" : status.signedIn === false ? "signed out: run claude auth login in a terminal" : "sign-in status unknown"}`;
+
+  return (
+    <section>
+      <div className="eyebrow mb-2">AI drafts · optional</div>
+      <label className="flex items-center justify-between gap-3 text-[12.5px] text-ink-2">
+        <span>Let Claude draft project descriptions in Resume</span>
+        <button
+          role="switch"
+          aria-checked={enabled || confirming}
+          disabled={!enabled && !usable}
+          onClick={() => (enabled ? void set(false) : setConfirming((c) => !c))}
+          className={`relative h-[18px] w-[30px] shrink-0 rounded-full transition-colors disabled:opacity-40 ${enabled ? "bg-star/80" : confirming ? "bg-white/[0.2]" : "bg-white/[0.1]"}`}
+        >
+          <span className={`absolute top-[2px] h-[14px] w-[14px] rounded-full bg-void transition-[left] ${enabled || confirming ? "left-[14px]" : "left-[2px]"}`} />
+        </button>
+      </label>
+      <p className="mt-1 text-[11.5px] text-ink-3">{cli}</p>
+      {(confirming || enabled) && (
+        <div className="mt-2 rounded-[9px] border border-line bg-white/[0.02] px-3 py-2.5 text-[12px]">
+          <div className="text-ink-2">When you click Generate draft in a project’s Resume, Hoku sends:</div>
+          <ul className="mt-1 list-disc space-y-0.5 pl-4 leading-relaxed text-ink-3">
+            {SENT_CATEGORIES.map((c) => (
+              <li key={c}>{c}</li>
+            ))}
+          </ul>
+          <p className="mt-1.5 text-[11.5px] leading-relaxed text-ink-4">{NEVER_SENT}</p>
+          <p className="mt-1.5 text-[11.5px] leading-relaxed text-ink-4">{HOW_IT_RUNS} You see the exact text before each draft, and a draft is only saved when you accept it.</p>
+          {confirming && !enabled && (
+            <div className="mt-2 flex justify-end gap-1.5">
+              <button className="btn btn-ghost" onClick={() => setConfirming(false)}>
+                Cancel
+              </button>
+              <button className="btn btn-primary" onClick={() => void set(true)}>
+                Turn on AI drafts
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+      {!confirming && !enabled && (
+        <p className="mt-1 text-[11.5px] leading-relaxed text-ink-4">Off by default. Resume works fully without it: you write the description and next step yourself.</p>
+      )}
+    </section>
   );
 }

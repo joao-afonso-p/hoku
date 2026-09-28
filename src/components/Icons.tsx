@@ -174,3 +174,9 @@ export const IconDownload = (p: P) => (
     <path d="M8 2.8v7M5 7l3 3 3-3M3.4 12.8h9.2" />
   </Svg>
 );
+export const IconResume = (p: P) => (
+  <Svg {...p}>
+    <path d="M3 3.5h10M3 6.5h6M3 9.5h4" />
+    <path d="m9.5 9 3.5 2.25L9.5 13.5Z" />
+  </Svg>
+);

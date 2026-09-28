@@ -130,7 +130,14 @@ const MIGRATIONS: &[&str] = &[
     r#"
     ALTER TABLE projects ADD COLUMN archived_at TEXT;
     "#,
-    // v4 — recap outcomes: one-line milestones the user writes for a recap. Never inferred.
+    // v4 — Project Resume: a user-written description and next step. Owned by the user; scans,
+    // re-association and project edits never touch them.
+    r#"
+    ALTER TABLE projects ADD COLUMN description TEXT;
+    ALTER TABLE projects ADD COLUMN next_step TEXT;
+    ALTER TABLE projects ADD COLUMN resume_updated_at TEXT;
+    "#,
+    // v5 — recap outcomes: one-line milestones the user writes for a recap. Never inferred.
     // Deleting a project keeps its outcomes (they become project-less).
     r#"
     CREATE TABLE recap_outcomes (
@@ -215,6 +222,9 @@ fn row_project(r: &Row) -> rusqlite::Result<Project> {
         slot: r.get("slot")?,
         is_demo: r.get::<_, i64>("is_demo")? != 0,
         archived_at: r.get("archived_at")?,
+        description: r.get("description")?,
+        next_step: r.get("next_step")?,
+        resume_updated_at: r.get("resume_updated_at")?,
         created_at: r.get("created_at")?,
         updated_at: r.get("updated_at")?,
     })
@@ -335,6 +345,47 @@ pub fn set_project_archived(conn: &Connection, id: &str, archived: bool) -> HubR
     if n == 0 {
         return Err(HubError::new("That project no longer exists."));
     }
+    Ok(get_project(conn, id)?.expect("exists"))
+}
+
+/// Longest project description we keep. A paragraph, not a document.
+pub const DESCRIPTION_MAX: usize = 600;
+/// Longest next step we keep.
+pub const NEXT_STEP_MAX: usize = 280;
+
+/// Trim, collapse to `None` when empty, and refuse anything over `max` characters rather than
+/// silently cutting what the user wrote.
+fn resume_text(v: Option<String>, max: usize, what: &str) -> HubResult<Option<String>> {
+    let Some(t) = v.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()) else {
+        return Ok(None);
+    };
+    if t.chars().count() > max {
+        return Err(HubError::new(format!(
+            "Keep the {what} under {max} characters."
+        )));
+    }
+    Ok(Some(t))
+}
+
+/// Set a project's Resume fields. `None` leaves a field alone; `Some(None)` clears it.
+pub fn update_project_resume(
+    conn: &Connection,
+    id: &str,
+    description: Option<Option<String>>,
+    next_step: Option<Option<String>>,
+) -> HubResult<Project> {
+    let mut p =
+        get_project(conn, id)?.ok_or_else(|| HubError::new("That project no longer exists."))?;
+    if let Some(d) = description {
+        p.description = resume_text(d, DESCRIPTION_MAX, "description")?;
+    }
+    if let Some(n) = next_step {
+        p.next_step = resume_text(n, NEXT_STEP_MAX, "next step")?;
+    }
+    conn.execute(
+        "UPDATE projects SET description=?2, next_step=?3, resume_updated_at=?4 WHERE id=?1",
+        params![id, p.description, p.next_step, now_iso()],
+    )?;
     Ok(get_project(conn, id)?.expect("exists"))
 }
 
@@ -1204,6 +1255,94 @@ mod tests {
             get_session(&c, "b").unwrap().unwrap().runtime.state,
             RuntimeState::Working
         );
+    }
+
+    #[test]
+    fn migrates_a_v3_database_keeping_projects_and_adding_resume_fields() {
+        let c = Connection::open_in_memory().unwrap();
+        for (i, sql) in MIGRATIONS.iter().take(3).enumerate() {
+            c.execute_batch(&format!(
+                "BEGIN; {sql}; PRAGMA user_version = {}; COMMIT;",
+                i + 1
+            ))
+            .unwrap();
+        }
+        c.execute_batch(
+            "INSERT INTO projects (id, name, root_path, slot, created_at, updated_at, archived_at)
+               VALUES ('p','Atlas','/u/atlas',4,'t','t',NULL), ('q','Old','/u/old',2,'t','t','t2');
+             INSERT INTO sessions (id, provider, title, project_id, notes, source, created_at, updated_at)
+               VALUES ('a','codex','Real','p','keep me','codex-state-db','t','t');",
+        )
+        .unwrap();
+        migrate(&c).unwrap();
+        let p = get_project(&c, "p").unwrap().unwrap();
+        assert_eq!(
+            (p.name.as_str(), p.slot, p.root_path.as_deref()),
+            ("Atlas", 4, Some("/u/atlas"))
+        );
+        assert_eq!((p.description, p.next_step), (None, None));
+        assert_eq!(
+            get_project(&c, "q")
+                .unwrap()
+                .unwrap()
+                .archived_at
+                .as_deref(),
+            Some("t2")
+        );
+        assert_eq!(
+            get_session(&c, "a").unwrap().unwrap().notes.as_deref(),
+            Some("keep me")
+        );
+    }
+
+    #[test]
+    fn resume_fields_are_user_owned_and_validated() {
+        let c = open_in_memory();
+        let p = project(&c, "Atlas", Some("/u/atlas"));
+        let p2 = update_project_resume(
+            &c,
+            &p.id,
+            Some(Some("  Billing service  ".into())),
+            Some(Some("Answer the queue question".into())),
+        )
+        .unwrap();
+        assert_eq!(p2.description.as_deref(), Some("Billing service"));
+        assert!(p2.resume_updated_at.is_some());
+        // Other edits, scans and re-association leave them alone.
+        update_project(&c, &p.id, Some("Atlas 2".into()), None, None, None).unwrap();
+        let d = DiscoveredSession {
+            external_id: "s".into(),
+            title: "t".into(),
+            working_directory: Some("/u/atlas/src".into()),
+            ..Default::default()
+        };
+        upsert_discovered(
+            &c,
+            Provider::Codex,
+            "codex-state-db",
+            &d,
+            Some(p.id.clone()),
+            None,
+        )
+        .unwrap();
+        crate::scan::reassociate(&c).unwrap();
+        let p3 = get_project(&c, &p.id).unwrap().unwrap();
+        assert_eq!(p3.description.as_deref(), Some("Billing service"));
+        assert_eq!(p3.next_step.as_deref(), Some("Answer the queue question"));
+        // `None` leaves a field; blank clears it; too long is refused, not cut.
+        let p4 = update_project_resume(&c, &p.id, None, Some(Some("   ".into()))).unwrap();
+        assert_eq!(
+            (p4.description.as_deref(), p4.next_step),
+            (Some("Billing service"), None)
+        );
+        assert!(update_project_resume(
+            &c,
+            &p.id,
+            Some(Some("x".repeat(DESCRIPTION_MAX + 1))),
+            None
+        )
+        .is_err());
+        assert!(update_project_resume(&c, "missing", None, None).is_err());
     }
 
     #[test]

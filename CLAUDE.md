@@ -54,7 +54,10 @@ Follow "Adding a new provider" in CONTRIBUTING.md step by step.
   and `codex login status`, parsing non-secret fields.
 - Store titles (≤64 chars), a ≤200-char preview and ≤160-char runtime detail only. Never
   persist transcripts, tool output or file contents.
-- No network: no HTTP clients, telemetry, analytics, remote assets, or CSP loosening.
+- No network: no HTTP clients, telemetry, analytics, remote assets, or CSP loosening. The
+  sole exception is the opt-in Project Resume AI draft in `resume.rs`. It runs only on an
+  explicit click, only through the installed Claude Code CLI, and only with the scrubbed
+  payload the user inspected. Don't widen it.
 - Everything from a provider store is untrusted input to the launch paths: validate ids,
   shell-quote paths, escape AppleScript.
 - Migrations must keep existing rows (see `migrates_a_v1_database_without_losing_rows`).

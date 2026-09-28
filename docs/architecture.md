@@ -10,7 +10,8 @@ small typed IPC surface.
 │ app/        App shell, store (useSyncExternalStore), actions │
 │ features/   constellation · galaxy · runtime · sessions ·    │
 │             command-palette · projects · activity · recaps · │
-│             scan · integrations · settings · onboarding      │
+│             resume · scan · integrations · settings ·        │
+│             onboarding                                       │
 │ providers/  UI descriptors only (label, glyph, accent)       │
 │ lib/        api.ts (typed invoke), types, hash, time, paths  │
 └──────────────────────────────┬───────────────────────────────┘
@@ -24,6 +25,7 @@ small typed IPC surface.
 │ recap.rs        recaps: bounded period query, outcomes, PNG  │
 │ providers/      claude_code · codex · claude_desktop (+text) │
 │ launch.rs       terminals (AppleScript), deep links, pbcopy  │
+│ resume.rs       opt-in AI draft for Project Resume (CLI)     │
 │ integrations.rs installed apps/CLIs, sign-in status          │
 │ devtools.rs     debug builds only: snapshot/eval socket      │
 └──────────────────────────────────────────────────────────────┘
@@ -37,7 +39,7 @@ on first launch; the old file is left as a backup. Migrations are an ordered lis
 
 | Table | Purpose |
 |---|---|
-| `projects` | name, optional root path, accent, **stable galaxy slot**, demo flag, `archived_at` (archived projects keep everything and restore in place) |
+| `projects` | name, optional root path, accent, **stable galaxy slot**, demo flag, `archived_at` (archived projects keep everything and restore in place), and the user-owned Resume fields `description` (≤600 chars) and `next_step` (≤280 chars) |
 | `provider_accounts` | per-vendor account labels (`claude` / `codex`), auth mode, status. Labels only, never secrets |
 | `sessions` | the index. `(provider, external_id)` is unique. User-owned flags: `favorite`, `notes`, `project_locked`, `title_locked`. `runtime_*` columns hold the normalized runtime status (monitor-owned) |
 | `activity_events` | semantic runtime transitions for the Activity timeline (90 days) |
@@ -145,9 +147,43 @@ reload the snapshot. The dataset is hundreds of rows, so this stays simple and c
   a new PNG in `~/Downloads` (never overwriting a file), and its text is copied with `pbcopy`.
   Card content is built from aggregates and the user's own words only. See
   [recaps.md](recaps.md).
-- Hoku makes no network requests and has no analytics or telemetry. It runs the providers'
+- Hoku makes no network requests of its own and has no analytics or telemetry. The one
+  opt-in exception is described in "Project Resume" below. It runs the providers'
   own CLIs (`claude auth status`, `codex login status`, `--version`), which may contact their
   servers. The production CSP allows only IPC; `devCsp` adds the Vite dev server's websocket.
+
+## Project Resume
+
+`src/features/resume/` presents a focused project's Resume. `model.ts` is pure: it
+decides what needs a decision (`sortNeedsYou`), where to continue (needs you → working →
+ready → error → most recent, preferring sessions Hoku can reopen), recent sessions, the
+last 7 days of semantic events and the notes you wrote. Its wording never overclaims:
+Ready is "finished its turn", and inferred states say "likely" or "inferred". The
+description and next step live on `projects` (migration v4). They're saved only through
+`update_project_resume`. Scans, re-association and project edits never touch them.
+
+### Optional AI drafts (`resume.rs`)
+
+Off by default (`settings["ai.drafts.provider"]`, `"off"` or `"claude-code"`). The flow has
+two explicit IPC steps:
+
+1. `prepare_resume_draft` builds the payload from Hoku's own index: the project name, the
+   user's description and next step, up to 8 sessions (title, state with its confidence,
+   short reason, relative time, branch, PR number, user note) and up to 12 events from the
+   last 14 days. It's capped at 6000 characters. Absolute and home paths, links, emails and
+   token-like strings are replaced (`scrub`). First prompts, runtime details, working
+   directories, ids and accounts are never included. The payload is cached under a token,
+   and the UI shows it verbatim.
+2. `generate_resume_draft(token)` refuses unless drafts are on, then sends exactly that
+   cached text on stdin to `claude --print --output-format json --no-session-persistence
+   --safe-mode --tools "" --strict-mcp-config --disable-slash-commands --system-prompt …`.
+   It runs from an empty scratch folder, with `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`
+   and a 2-minute timeout. The CLI uses its own sign-in, and Hoku never reads credentials.
+   `ai_draft_status` checks that `claude --help` lists every required flag and reads only
+   `loggedIn` from `claude auth status`. If a flag is missing, drafts stay unavailable
+   instead of running with fewer safeguards.
+
+The reply is parsed into an editable draft. Nothing is stored until the user accepts it.
 
 ## Development tooling
 
