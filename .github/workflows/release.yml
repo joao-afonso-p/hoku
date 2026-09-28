@@ -7,7 +7,8 @@
 #     attestation. A maintainer reviews the draft and publishes it by hand.
 #   - workflow_dispatch runs the same build. From a branch it's a rehearsal: the DMG and
 #     checksums are kept as a workflow artifact and no release is created. From a tag it
-#     behaves like a tag push (useful to retry a failed release).
+#     behaves like a tag push (useful to retry a failed release). The Version workflow
+#     (version.yml) starts it this way for the tag it creates when a release PR is merged.
 #
 # Signing: Hoku is not in the paid Apple Developer Program, so the app is ad-hoc signed
 # (no Apple account, no secrets) and not notarized. macOS asks once before the first

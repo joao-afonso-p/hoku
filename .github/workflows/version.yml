@@ -1,0 +1,113 @@
+# Keeps Hoku's version and releases in step with main, after every merge.
+#
+# On each push to main, scripts/next-version.mjs decides:
+#
+#   tag   The version in package.json has no v<version> tag yet, so a release PR (or a
+#         hand-made version bump) was just merged. This job tags that commit and starts the
+#         Release workflow (release.yml) for the tag, which builds the DMG and drafts the
+#         GitHub Release. Publishing the draft stays a maintainer step (docs/releasing.md).
+#
+#   pr    Releasable commits (feat, fix, perf, breaking changes) landed since the last tag.
+#         This job opens or updates one pull request, "chore: release vX.Y.Z", on the branch
+#         release/next, bumping package.json, tauri.conf.json, Cargo.toml and Cargo.lock
+#         together (scripts/bump-version.mjs). It then starts CI on that branch, since pushes
+#         made with GITHUB_TOKEN don't trigger other workflows. Merging the PR releases.
+#
+#   none  Only docs, ci, chore, test or refactor commits: nothing to release.
+#
+# main is protected (pull requests only), so this workflow never pushes to main. It pushes only
+# the release/next branch and v* tags.
+#
+# One-time setup: Settings → Actions → General → "Allow GitHub Actions to create and approve
+# pull requests". Without it the branch is still pushed, and the job prints a link to open the
+# pull request by hand.
+
+name: Version
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: version
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Tag a release or update the release PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write # push release/next and v* tags
+      pull-requests: write # open or update the release PR
+      actions: write # start release.yml and ci.yml
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # tags and history, to find the last release and the commits since
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Decide
+        id: plan
+        run: |
+          node scripts/next-version.mjs | tee -a "$GITHUB_OUTPUT"
+
+      - name: Tag v${{ steps.plan.outputs.version }} and start the release
+        if: steps.plan.outputs.mode == 'tag'
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v$VERSION" -m "Hoku $VERSION"
+          git push origin "v$VERSION"
+          # A tag pushed with GITHUB_TOKEN doesn't trigger release.yml's tag push, so start it
+          # for the tag directly. release.yml treats a run from a tag exactly like a tag push.
+          gh workflow run release.yml --ref "v$VERSION"
+          echo "Tagged v$VERSION and started the Release workflow. It drafts the GitHub Release." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open or update the release PR for v${{ steps.plan.outputs.version }}
+        if: steps.plan.outputs.mode == 'pr'
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+          PREVIOUS: ${{ steps.plan.outputs.previous }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C release/next
+          node scripts/bump-version.mjs "$VERSION"
+          git commit -am "chore: release v$VERSION"
+          git push --force origin release/next
+
+          range="${PREVIOUS:+v$PREVIOUS..}${GITHUB_SHA}"
+          {
+            echo "Releases **Hoku $VERSION**. Merging this pull request tags \`v$VERSION\` and starts the Release workflow, which builds the DMG and drafts the GitHub Release."
+            echo
+            echo "Changes since ${PREVIOUS:+v$PREVIOUS}${PREVIOUS:-the first commit}:"
+            echo
+            git log --no-merges --format='- %s' "$range" | grep -v '^- chore: release v' || true
+            echo
+            echo "This pull request is kept up to date by the Version workflow (\`.github/workflows/version.yml\`). Before merging, check that the user guide in \`site/\` covers every user-facing change above."
+          } > "$RUNNER_TEMP/body.md"
+
+          title="chore: release v$VERSION"
+          if number="$(gh pr list --head release/next --state open --json number --jq '.[0].number' | grep .)"; then
+            gh pr edit "$number" --title "$title" --body-file "$RUNNER_TEMP/body.md"
+          elif ! gh pr create --base main --head release/next --title "$title" --body-file "$RUNNER_TEMP/body.md"; then
+            echo "::warning::Couldn't open the release pull request. Turn on Settings → Actions → General → 'Allow GitHub Actions to create and approve pull requests', or open it by hand: $GITHUB_SERVER_URL/$GH_REPO/compare/main...release/next?expand=1"
+          fi
+
+          # Pushes made with GITHUB_TOKEN don't trigger CI, and main requires its checks, so
+          # start CI on the release branch. Its checks attach to the pull request's commit.
+          gh workflow run ci.yml --ref release/next
