@@ -8,6 +8,7 @@ import { Constellation } from "../features/constellation/Constellation";
 import { IntegrationCenter } from "../features/integrations/IntegrationCenter";
 import { EmptyState } from "../features/onboarding/EmptyState";
 import { ProjectSheet } from "../features/projects/ProjectSheet";
+import { RecapsView } from "../features/recaps/RecapsView";
 import { ScanSheet } from "../features/scan/ScanSheet";
 import { GalaxyControls } from "../features/galaxy/GalaxyControls";
 import { ambienceFromSettings } from "../features/constellation/Starfield";
@@ -16,10 +17,11 @@ import { AddSessionSheet } from "../features/sessions/AddSessionSheet";
 import { SessionsView } from "../features/sessions/SessionsView";
 import { INSPECTOR_WIDTH, Inspector } from "../features/sessions/Inspector";
 import { SettingsSheet } from "../features/settings/SettingsSheet";
+import { ResumeDrawer } from "../features/resume/ResumeDrawer";
 import { SpacesHelpSheet } from "../features/sessions/SpacesHelpSheet";
 import { ageMs } from "../lib/time";
 import { isSessionVisible, visibilityFromSettings } from "../features/galaxy/visibility";
-import { setVisibility, showGalaxy, closeOverlay, copy, escape, focusProject, openOverlay, openSession, patchSession, reload, scan, select, startRuntimeUpdates, toast, toggleFollowUp } from "./actions";
+import { setVisibility, showGalaxy, closeOverlay, copy, escape, focusProject, openOverlay, openSession, patchSession, reload, scan, select, startRuntimeUpdates, toast, toggleFollowUp, toggleResume } from "./actions";
 import { UNSORTED, useSession, useSystems, useVisibility } from "./model";
 import { getState, useHub } from "./store";
 
@@ -42,6 +44,7 @@ export function App() {
   const systems = useSystems();
   const visibility = useVisibility();
   const selected = useSession(selectedId);
+  const resumeProject = useHub((s) => (s.list === "resume" && s.focus ? (s.data.projects.find((p) => p.id === s.focus && !p.archivedAt) ?? null) : null));
 
   useEffect(() => {
     void reload();
@@ -60,7 +63,7 @@ export function App() {
   }, [list, sessions, activity, activityRange, activityProvider, statusFilter]);
 
   const empty = loaded && sessions.length === 0 && projectsCount === 0;
-  const drawerInset = list ? drawerWidth(list) + 12 : 0;
+  const drawerInset = list && (list !== "resume" || resumeProject) ? drawerWidth(list) + 12 : 0;
 
   return (
     <div className="flex h-full">
@@ -101,9 +104,11 @@ export function App() {
 
         {loaded && !empty && view === "galaxy" && <GalaxyControls systems={systems} left={drawerInset} mode={visibility.mode} windowDays={visibility.recentWindowDays} />}
         {view === "sessions" && <SessionsView insetRight={selected ? INSPECTOR_WIDTH + 12 : 0} />}
+        {view === "recaps" && <RecapsView />}
         <TopBar systems={systems} />
-        {list && <ListDrawer mode={list} systems={systems} />}
-        {selected && <Inspector key={selected.id} session={selected} />}
+        {list && list !== "resume" && <ListDrawer mode={list} systems={systems} />}
+        {resumeProject && <ResumeDrawer project={resumeProject} />}
+        {selected && view !== "recaps" && <Inspector key={selected.id} session={selected} />}
 
         {overlay?.kind === "palette" && <CommandPalette />}
         {overlay?.kind === "add-session" && <AddSessionSheet projectId={overlay.projectId} />}
@@ -155,8 +160,13 @@ function useGlobalKeys(systemKeys: string[]) {
         const projects = systemKeys.filter((k) => k !== UNSORTED);
         const key = projects[Number(e.key) - 1];
         if (key) focusProject(key);
+      } else if (!mod && !e.altKey && e.key.toLowerCase() === "r" && s.focus && s.focus !== UNSORTED && s.view === "galaxy") {
+        e.preventDefault();
+        toggleResume(s.focus);
       } else if (e.key === "Escape") {
         escape();
+      } else if (s.view === "recaps" && (e.key === "Enter" || e.key === "Tab")) {
+        // Recaps is a form: Tab and Enter move through and press its controls.
       } else if (e.key === "Enter" && s.selectedId) {
         const session = s.data.sessions.find((x) => x.id === s.selectedId);
         if (session) void openSession(session);

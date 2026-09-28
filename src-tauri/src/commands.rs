@@ -5,6 +5,8 @@ use crate::integrations;
 use crate::launch::{self, LaunchContext, OpenResult};
 use crate::models::*;
 use crate::providers::{self, claude_desktop::normalize_chat_reference, SessionAdapter};
+use crate::recap::{self, Outcome, OutcomeInput, Recap, RecapQuery};
+use crate::resume;
 use crate::runtime::{self, MonitorState};
 use crate::scan;
 use rusqlite::Connection;
@@ -18,6 +20,8 @@ pub struct AppState {
     pub adapters: Arc<Vec<Box<dyn SessionAdapter>>>,
     pub monitor: Arc<Mutex<MonitorState>>,
     pub claude_home: std::path::PathBuf,
+    /// The Resume draft payload the user is looking at. Generate sends exactly this.
+    pub draft: Arc<Mutex<Option<resume::Prepared>>>,
 }
 
 type Db<'a> = State<'a, AppState>;
@@ -99,6 +103,26 @@ pub fn update_project(state: Db, id: String, patch: ProjectPatchArgs) -> HubResu
 #[tauri::command]
 pub fn archive_project(state: Db, id: String, archived: bool) -> HubResult<Project> {
     db::set_project_archived(&lock(&state), &id, archived)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectResumeArgs {
+    #[serde(default, with = "double_option")]
+    description: Option<Option<String>>,
+    #[serde(default, with = "double_option")]
+    next_step: Option<Option<String>>,
+}
+
+/// Save the user's Resume text. Deliberately separate from `update_project`: it never
+/// re-associates sessions, and scans and project edits never touch these fields.
+#[tauri::command]
+pub fn update_project_resume(
+    state: Db,
+    id: String,
+    patch: ProjectResumeArgs,
+) -> HubResult<Project> {
+    db::update_project_resume(&lock(&state), &id, patch.description, patch.next_step)
 }
 
 #[tauri::command]
@@ -453,6 +477,119 @@ pub fn open_provider_app(app: String) -> HubResult<()> {
         _ => return Err(HubError::new("Unknown app.")),
     };
     launch::open_url(url).map_err(|e| HubError::with_detail("The app couldn't be opened.", e))
+}
+
+// ───────────────────────────── recaps ─────────────────────────────
+
+#[tauri::command]
+pub fn get_recap(state: Db, query: RecapQuery) -> HubResult<Recap> {
+    recap::build(&lock(&state), &query)
+}
+
+#[tauri::command]
+pub fn create_outcome(state: Db, input: OutcomeInput) -> HubResult<Outcome> {
+    recap::create_outcome(&lock(&state), &input)
+}
+
+#[tauri::command]
+pub fn update_outcome(state: Db, id: String, input: OutcomeInput) -> HubResult<Outcome> {
+    recap::update_outcome(&lock(&state), &id, &input)
+}
+
+#[tauri::command]
+pub fn delete_outcome(state: Db, id: String) -> HubResult<()> {
+    recap::delete_outcome(&lock(&state), &id)
+}
+
+/// The share card arrives as the raw PNG body of the request (no base64 round trip).
+fn png_body<'a>(request: &'a tauri::ipc::Request<'_>) -> HubResult<&'a [u8]> {
+    match request.body() {
+        tauri::ipc::InvokeBody::Raw(bytes) => Ok(bytes),
+        _ => Err(HubError::new("That image couldn't be exported.")),
+    }
+}
+
+/// Save a share card the user exported to ~/Downloads. Returns the file's path.
+#[tauri::command]
+pub fn save_recap_image(request: tauri::ipc::Request<'_>) -> HubResult<String> {
+    let dir = std::path::PathBuf::from(crate::association::home_dir()).join("Downloads");
+    recap::save_png(&dir, png_body(&request)?).map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Copy a share card to the clipboard as a PNG.
+#[tauri::command]
+pub fn copy_recap_image(request: tauri::ipc::Request<'_>) -> HubResult<()> {
+    recap::copy_png(png_body(&request)?)
+}
+
+// ───────────────────────────── resume drafts (optional AI) ─────────────────────────────
+
+/// Is the Claude Code CLI there, signed in, and new enough to run a tool-less, session-less
+/// draft? Also reports whether the user turned drafts on.
+#[tauri::command]
+pub async fn ai_draft_status(state: Db<'_>) -> HubResult<resume::DraftProviderStatus> {
+    let dbh = state.db.clone();
+    blocking(move || {
+        let enabled = resume::enabled(&dbh.lock().expect("db"))?;
+        Ok(resume::provider_status(
+            integrations::claude_cli().as_deref(),
+            enabled,
+        ))
+    })
+    .await
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreparedDraft {
+    token: String,
+    #[serde(flatten)]
+    payload: resume::DraftPayload,
+}
+
+/// Build the exact payload for a project's draft, for the user to inspect. Sends nothing.
+#[tauri::command]
+pub fn prepare_resume_draft(state: Db, project_id: String) -> HubResult<PreparedDraft> {
+    let payload = resume::build_payload(&lock(&state), &project_id, chrono::Utc::now())?;
+    let token = db::new_id();
+    *state.draft.lock().expect("draft") = Some(resume::Prepared {
+        token: token.clone(),
+        project_id,
+        payload: payload.clone(),
+    });
+    Ok(PreparedDraft { token, payload })
+}
+
+/// The one place Hoku talks to an AI provider: only on an explicit click, only when drafts are
+/// on, only with the payload the user just inspected (by token). Returns an unsaved draft.
+#[tauri::command]
+pub async fn generate_resume_draft(state: Db<'_>, token: String) -> HubResult<resume::Draft> {
+    let dbh = state.db.clone();
+    let prepared = state
+        .draft
+        .lock()
+        .expect("draft")
+        .clone()
+        .filter(|p| p.token == token)
+        .ok_or_else(|| {
+            HubError::new("That preview is out of date. Review it again, then generate.")
+        })?;
+    blocking(move || {
+        if !resume::enabled(&dbh.lock().expect("db"))? {
+            return Err(HubError::new(
+                "AI drafts are off. Turn them on in Settings first.",
+            ));
+        }
+        if db::get_project(&dbh.lock().expect("db"), &prepared.project_id)?.is_none() {
+            return Err(HubError::new("That project no longer exists."));
+        }
+        let bin = integrations::claude_cli().ok_or_else(|| {
+            HubError::new("Claude Code isn't installed, so Hoku can't draft with it.")
+        })?;
+        let stdout = resume::run_claude(&bin, &prepared.payload.prompt, resume::CLI_TIMEOUT)?;
+        resume::parse_draft(&resume::parse_cli_output(&stdout)?)
+    })
+    .await
 }
 
 // ───────────────────────────── scanning ─────────────────────────────

@@ -1,14 +1,21 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  DraftProviderStatus,
   HubError,
   HubSnapshot,
   OpenResult,
+  Outcome,
+  OutcomeInput,
   ParsedReference,
+  PreparedDraft,
   Project,
   ProjectSuggestion,
   Provider,
   ProviderAccount,
   ProviderGroup,
+  Recap,
+  RecapQuery,
+  ResumeDraft,
   ScanReport,
   Session,
 } from "./types";
@@ -19,7 +26,7 @@ export function toHubError(e: unknown): HubError {
   return { message: "Something went wrong.", detail: String(e) };
 }
 
-async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+async function call<T>(cmd: string, args?: Record<string, unknown> | Uint8Array): Promise<T> {
   try {
     return await invoke<T>(cmd, args);
   } catch (e) {
@@ -48,6 +55,11 @@ export interface ProjectPatch {
   icon?: string | null;
 }
 
+export interface ProjectResumePatch {
+  description?: string | null;
+  nextStep?: string | null;
+}
+
 export const api = {
   snapshot: () => call<HubSnapshot>("get_snapshot"),
 
@@ -56,6 +68,13 @@ export const api = {
   updateProject: (id: string, patch: ProjectPatch) => call<Project>("update_project", { id, patch }),
   deleteProject: (id: string) => call<void>("delete_project", { id }),
   archiveProject: (id: string, archived: boolean) => call<Project>("archive_project", { id, archived }),
+  updateProjectResume: (id: string, patch: ProjectResumePatch) => call<Project>("update_project_resume", { id, patch }),
+
+  aiDraftStatus: () => call<DraftProviderStatus>("ai_draft_status"),
+  /** Builds the payload for inspection. Sends nothing. */
+  prepareResumeDraft: (projectId: string) => call<PreparedDraft>("prepare_resume_draft", { projectId }),
+  /** Sends exactly the prepared payload to the Claude Code CLI. Only on an explicit click. */
+  generateResumeDraft: (token: string) => call<ResumeDraft>("generate_resume_draft", { token }),
   projectSuggestions: () => call<ProjectSuggestion[]>("project_suggestions"),
   createProjectsFromSuggestions: (suggestions: { name: string; rootPath: string; color?: string | null }[]) =>
     call<number>("create_projects_from_suggestions", { suggestions }),
@@ -82,6 +101,14 @@ export const api = {
   openSpacesSettings: () => call<void>("open_spaces_settings"),
   revealPath: (path: string) => call<void>("reveal_path", { path }),
   openProviderApp: (app: "claude" | "codex") => call<void>("open_provider_app", { app }),
+
+  recap: (query: RecapQuery) => call<Recap>("get_recap", { query }),
+  createOutcome: (input: OutcomeInput) => call<Outcome>("create_outcome", { input }),
+  updateOutcome: (id: string, input: OutcomeInput) => call<Outcome>("update_outcome", { id, input }),
+  deleteOutcome: (id: string) => call<void>("delete_outcome", { id }),
+  /** The PNG travels as the raw request body. Returns the saved file's path. */
+  saveRecapImage: (png: Uint8Array) => call<string>("save_recap_image", png),
+  copyRecapImage: (png: Uint8Array) => call<void>("copy_recap_image", png),
 
   scan: (adapters?: string[]) => call<ScanReport>("scan_sessions", { adapters: adapters ?? null }),
   refreshRuntime: () => call<boolean>("refresh_runtime"),

@@ -173,3 +173,23 @@ export const IconFlagFilled = (p: P) => (
     <path d="M4.2 3.3h7.6l-1.7 2.7 1.7 2.7H4.2" fill="currentColor" />
   </Svg>
 );
+/** Recaps: a card with a small constellation on it. */
+export const IconRecap = (p: P) => (
+  <Svg {...p}>
+    <rect x="2.4" y="3.2" width="11.2" height="9.6" rx="1.6" />
+    <circle cx="6" cy="7" r="0.9" fill="currentColor" stroke="none" />
+    <circle cx="10.2" cy="6.2" r="0.9" fill="currentColor" stroke="none" />
+    <path d="M6.8 6.8 9.4 6.4M5 10.4h6" strokeOpacity={0.6} />
+  </Svg>
+);
+export const IconDownload = (p: P) => (
+  <Svg {...p}>
+    <path d="M8 2.8v7M5 7l3 3 3-3M3.4 12.8h9.2" />
+  </Svg>
+);
+export const IconResume = (p: P) => (
+  <Svg {...p}>
+    <path d="M3 3.5h10M3 6.5h6M3 9.5h4" />
+    <path d="m9.5 9 3.5 2.25L9.5 13.5Z" />
+  </Svg>
+);

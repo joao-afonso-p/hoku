@@ -164,6 +164,10 @@ recorded once, and event times never go backwards. The first time Hoku evaluates
 (first launch, fresh import), only what matters now is recorded: needs input, working,
 ready, error. "Offline" is never flooded.
 
+Recaps read these events through their own bounded query (the whole period, up to the
+90-day retention, not the snapshot's 30 days and 600 rows). They count `became_ready` as
+"turns handed back", never as completed tasks. See [recaps.md](recaps.md).
+
 ## Storage
 
 Migration v2 adds `runtime_state`, `runtime_confidence`, `runtime_reason`,
@@ -179,7 +183,7 @@ Transcripts are never stored.
 ## Where it shows up
 
 - **Sidebar**: Galaxy · **Needs You (badge)** · **Follow up (due badge)** · Activity ·
-  Favorites · Projects · Sessions. Working, Ready, Idle and Offline are filters, not
+  Favorites · Projects · Sessions · Recaps. Working, Ready, Idle and Offline are filters, not
   destinations. Needs You's badge is amber; Follow up's is a quiet starlight count of
   reminders that have gone off, so the two never read as the same thing.
 - **Galaxy**: `Current · 7d | All`, quick filters `Needs You n` and `Working n` (which double

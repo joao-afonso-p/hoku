@@ -25,7 +25,7 @@ pub const READY_TTL_MIN: i64 = 45;
 pub const ERROR_TTL_MIN: i64 = 6 * 60;
 /// The same event type for a session within this window is recorded once.
 const EVENT_DEDUPE_SECS: i64 = 120;
-const EVENT_RETENTION_DAYS: i64 = 90;
+pub const EVENT_RETENTION_DAYS: i64 = 90;
 /// How often an unchanged state gets its `lastObservedAt` refreshed.
 const HEARTBEAT: Duration = Duration::from_secs(60);
 /// Minimum gap between automatic discoveries for one adapter.

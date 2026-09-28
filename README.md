@@ -17,6 +17,8 @@ sessions, runtime state and attention flow stay searchable and manageable.
 
 ![Hoku Sessions view](docs/images/sessions.png)
 
+![Hoku Project Resume with demo data](docs/images/resume.png)
+
 **Platform:** macOS only (developed on Apple Silicon). Linux and Windows are not supported:
 opening sessions relies on AppleScript, iTerm/Terminal and macOS app bundles. Hoku is pre-1.0.
 Releases are built for Apple Silicon Macs; on an Intel Mac, [build it from source](#running).
@@ -65,6 +67,9 @@ download.
 - No account, no cloud, no backend, no analytics, no telemetry. Hoku makes no network
   requests itself. For account status it runs the providers' own CLIs (`claude auth status`,
   `codex login status`), which may contact their own servers.
+- One opt-in exception: **AI drafts** for Project Resume (off by default, see below). When
+  you turn them on *and* click **Generate draft**, Hoku hands a short text you can inspect
+  first to your installed Claude Code CLI, which sends it to Claude with its own sign-in.
 - Claude and Codex data is **read** from this Mac, strictly read-only. Their files and
   databases are never modified.
 - No passwords or tokens are read or stored. Sign-in stays with each provider's own app.
@@ -73,6 +78,8 @@ download.
   session is waiting on), and metadata: working directory, file paths, branch, PR link,
   model and token count. Account labels can include the email `claude auth status` reports.
 - The index lives in `~/Library/Application Support/com.hoku.app/hub.sqlite`, on this Mac only.
+- Sharing a recap is always something you do: Hoku copies the image or text to the clipboard,
+  or saves a PNG to `~/Downloads`, and never posts or uploads anything.
 
 ## Using it
 
@@ -91,8 +98,11 @@ download.
 | **Go to terminal** | The one action for Claude Code. At click time Hoku checks live state and switches to the tab it's running in (or to VS Code, when it runs in VS Code's terminal), attaches to a background session, or resumes it in a new tab of your frontmost iTerm window. It never starts a second copy of a live session. |
 | **Galaxy ambience** | *Settings → Galaxy ambience*: `Subtle motion` (default: the background drifts imperceptibly and follows the cursor a little) or `Still`. Runtime animations are separate and always shown, unless macOS reduced motion is on. |
 | **⌘K** | Search **all** sessions (including ones hidden from Current or by a filter), projects and actions. `↵` opens, `⌘↵` shows on map, `⌥↵` filters the Galaxy to its state, `⌘P` goes to its project, `⌘D` favorites, `⌘F` follows up, `⌘C` copies the ID. |
+| **Resume** (`R` in a project) | A return-to-work view for the focused project: your description and next step (both editable), **Continue here** (the session to open first, with why), what **needs a decision**, recent sessions with state, branch, PR and notes, and **what changed** in the last 7 days. *Ready* means an agent finished its turn, not that the task is done; inferred states are marked. Also from the project header, the Projects drawer and ⌘K. |
+| **AI drafts** (optional) | *Settings → AI drafts* lets Claude draft a project's description and next step through the installed Claude Code CLI. Off by default and never automatic. Before each draft you see the exact text that will be sent: project name, your description, next step and session notes, session titles and states, branch names, PR numbers and recent events. No transcripts, prompts, tool output, file contents, paths, links, emails, accounts or session IDs, and paths, links, emails and token-like strings are replaced before sending. The CLI runs once with every tool disabled, your customizations off (`--safe-mode`) and no saved session (`--no-session-persistence`). Hoku never reads credentials. The draft is saved only when you accept it. |
 | **Activity** | Cross-provider timeline of what started, finished, needed you or failed (Today / 7d / 30d). |
 | **Sessions** | The management table: search, sort, filter by project, provider, status, account, favorite, follow up, recency. |
+| **Recaps** | A shareable recap of a period (today, 7, 30 or 90 days) and some or all projects. Shows observed activity (active projects, sessions, days, provider mix, linked PRs) with its coverage, next to outcomes *you* write (each one goes on the card only when you tick it). Export a share card as a PNG or copy it, plus LinkedIn or Slack/Teams text. Public-safe by default: no account names, titles, IDs, paths, prompts, notes, PR links or unnamed projects. See [docs/recaps.md](docs/recaps.md). |
 | **Favorites / Projects** | Left rail drawers. Projects show compact runtime summaries ("1 needs you · 2 working"). |
 | **Scan** (⌘⇧S) | Discovers Claude Code, Codex and Cowork sessions and suggests projects from their folders. |
 | **Add session** (⌘N) | Paste a Claude link, a Codex thread ID or a Claude Code session ID. |

@@ -2,7 +2,7 @@ import { listen } from "@tauri-apps/api/event";
 import { isSessionVisible, visibilityFromSettings, VISIBILITY_KEYS, type GalaxyVisibility } from "../features/galaxy/visibility";
 import type { StatusKey } from "../features/runtime/status";
 import type { SessionFilter } from "../features/sessions/filter";
-import { api, type FollowUpInput, type ProjectPatch, type SessionPatch } from "../lib/api";
+import { api, type FollowUpInput, type ProjectPatch, type ProjectResumePatch, type SessionPatch } from "../lib/api";
 import type { HubError, Session } from "../lib/types";
 import { getState, setState, type ListMode, type Overlay, type Toast } from "./store";
 
@@ -37,6 +37,9 @@ export async function reload() {
       selectedId: s.selectedId && data.sessions.some((x) => x.id === s.selectedId) ? s.selectedId : null,
       focus: s.focus && s.focus !== "unsorted" && !data.projects.some((p) => p.id === s.focus && !p.archivedAt) ? null : s.focus,
     }));
+    // Resume describes the focused project; without one there's nothing to show.
+    const s = getState();
+    if (s.list === "resume" && (!s.focus || s.focus === "unsorted")) setState({ list: null });
   } catch (e) {
     setState({ loaded: true, loadError: e as HubError });
   }
@@ -45,7 +48,20 @@ export async function reload() {
 // ───────────── navigation ─────────────
 
 export function focusProject(id: string | null) {
-  setState((s) => ({ focus: id, list: null, view: "galaxy", expanded: s.expanded === id ? s.expanded : null }));
+  // Resume follows you from project to project; every other drawer closes.
+  const keepResume = (s: { list: ListMode | null }) => s.list === "resume" && !!id && id !== "unsorted";
+  setState((s) => ({ focus: id, list: keepResume(s) ? "resume" : null, view: "galaxy", expanded: s.expanded === id ? s.expanded : null }));
+}
+
+/** Project Resume: focus the project and open its Resume drawer. */
+export function openResume(projectId: string) {
+  setState((s) => ({ focus: projectId, list: "resume", view: "galaxy", expanded: s.expanded === projectId ? s.expanded : null }));
+}
+
+export function toggleResume(projectId: string) {
+  const s = getState();
+  if (s.list === "resume" && s.focus === projectId && s.view === "galaxy") setState({ list: null });
+  else openResume(projectId);
 }
 
 /** Go to the Galaxy; if already there, re-frame all systems. */
@@ -57,6 +73,15 @@ export function showGalaxy() {
 
 export function showSessions() {
   setState((s) => ({ view: s.view === "sessions" && !s.list ? "galaxy" : "sessions", list: null }));
+}
+
+/** Recaps take the whole area; the inspector would only cover the share preview. */
+export function showRecaps() {
+  setState((s) => ({ view: s.view === "recaps" && !s.list ? "galaxy" : "recaps", list: null, selectedId: null }));
+}
+
+export function openRecaps() {
+  setState({ view: "recaps", list: null, selectedId: null });
 }
 
 // ───────────── runtime filters ─────────────
@@ -262,6 +287,19 @@ export async function saveProject(id: string | null, input: { name: string; root
   } catch (e) {
     fail(e);
     return null;
+  }
+}
+
+/** Save the user's Resume text (or an accepted draft). Returns false when it didn't save. */
+export async function saveProjectResume(id: string, patch: ProjectResumePatch, message = "Saved"): Promise<boolean> {
+  try {
+    await api.updateProjectResume(id, patch);
+    await reload();
+    toast({ tone: "success", message });
+    return true;
+  } catch (e) {
+    fail(e);
+    return false;
   }
 }
 
