@@ -27,6 +27,7 @@
 - [ ] `cd src-tauri && cargo test`
 - [ ] `pnpm build`, and `pnpm tauri build --debug --bundles app` for Rust or config changes
 - [ ] Docs updated (`README.md`, `docs/`) if behaviour, providers or the security model changed
+- [ ] User guide updated (`site/`) for any user-facing change, with new screenshots from `pnpm capture` if the UI changed (see `site/README.md`)
 
 ## Privacy and safety
 

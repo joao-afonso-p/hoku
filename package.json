@@ -1,11 +1,11 @@
 {
   "name": "hoku",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Local-first macOS app that indexes your Claude Code, Codex, and Claude Desktop sessions (read-only).",
   "license": "MIT",
   "author": "João Afonso",
-  "homepage": "https://github.com/joao-afonso-p/hoku#readme",
+  "homepage": "https://joao-afonso-p.github.io/hoku/",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/joao-afonso-p/hoku.git"
