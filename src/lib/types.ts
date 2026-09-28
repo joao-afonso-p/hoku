@@ -198,6 +198,21 @@ export interface ParsedReference {
   summary: string;
 }
 
+/** What macOS allows Hoku to show (src-tauri/src/attention.rs). */
+export interface NotificationStatus {
+  /** "unavailable": this build can't post notifications (an unbundled dev binary). */
+  permission: "authorized" | "provisional" | "denied" | "not-determined" | "unavailable";
+  /** Alerts (banners) are on for Hoku in System Settings. */
+  alerts: boolean;
+  /** "Badge application icon" is on for Hoku in System Settings. */
+  badges: boolean;
+}
+
+/** A clicked Needs You banner. `sessionId: null` leads to the Needs You inbox. */
+export interface NotificationTarget {
+  sessionId: string | null;
+}
+
 export interface HubError {
   message: string;
   detail?: string | null;

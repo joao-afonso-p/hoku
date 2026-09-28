@@ -1,4 +1,5 @@
 mod association;
+mod attention;
 mod commands;
 mod db;
 mod demo;
@@ -30,14 +31,18 @@ pub fn run() {
             db: Arc::new(Mutex::new(conn)),
             adapters: Arc::new(commands::default_adapters()),
             monitor: Arc::new(Mutex::new(runtime::MonitorState::default())),
+            attention: Arc::new(Mutex::new(attention::Tracker::default())),
             claude_home: std::path::PathBuf::from(association::home_dir()).join(".claude"),
             draft: Arc::new(Mutex::new(None)),
         };
+        // Before anything else, so a notification click that launched Hoku is delivered.
+        attention::install(app.handle());
         runtime::start(
             app.handle().clone(),
             state.db.clone(),
             state.adapters.clone(),
             state.monitor.clone(),
+            state.attention.clone(),
         );
         app.manage(state);
         #[cfg(debug_assertions)]
@@ -83,6 +88,10 @@ pub fn run() {
                 commands::create_account,
                 commands::rename_account,
                 commands::set_setting,
+                commands::notification_status,
+                commands::request_notification_permission,
+                commands::open_notification_settings,
+                commands::take_notification_target,
                 commands::load_demo,
                 commands::clear_demo,
                 commands::database_path

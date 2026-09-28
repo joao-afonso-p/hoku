@@ -3,12 +3,13 @@ import { closeOverlay, fail, reload, setVisibility, toast } from "../../app/acti
 import { useVisibility } from "../../app/model";
 import mark from "../../assets/hoku-mark-96.png";
 import { RECENT_WINDOWS } from "../galaxy/visibility";
+import { notificationPrefs, NOTIFY_KEYS, type NotificationPrefs } from "../notifications/notifications";
 import { AMBIENCE_KEY, ambienceFromSettings, type Ambience } from "../constellation/Starfield";
 import { useHub } from "../../app/store";
 import { Sheet } from "../../components/Sheet";
 import { api } from "../../lib/api";
 import { tildify } from "../../lib/paths";
-import type { DraftProviderStatus } from "../../lib/types";
+import type { DraftProviderStatus, NotificationStatus } from "../../lib/types";
 import { AI_DRAFTS_KEY } from "../resume/ResumeDrawer";
 import { HOW_IT_RUNS, NEVER_SENT, SENT_CATEGORIES } from "../resume/privacy";
 
@@ -104,6 +105,8 @@ export function SettingsSheet() {
           </p>
         </section>
 
+        <NeedsYouAlerts />
+
         <section>
           <div className="eyebrow mb-2">Claude Code opens in</div>
           <div className="grid grid-cols-3 gap-1 rounded-[9px] border border-line bg-white/[0.02] p-1">
@@ -184,6 +187,65 @@ export function SettingsSheet() {
         </section>
       </div>
     </Sheet>
+  );
+}
+
+function NeedsYouAlerts() {
+  const settings = useHub((s) => s.data.settings);
+  const prefs = notificationPrefs(settings);
+  const [status, setStatus] = useState<NotificationStatus | null>(null);
+
+  useEffect(() => {
+    const check = () => void api.notificationStatus().then(setStatus).catch(() => setStatus(null));
+    check();
+    // Coming back from System Settings.
+    window.addEventListener("focus", check);
+    return () => window.removeEventListener("focus", check);
+  }, []);
+
+  const set = async (key: keyof NotificationPrefs, on: boolean) => {
+    try {
+      await api.setSetting(NOTIFY_KEYS[key], on);
+      await reload();
+      // Ask in context: macOS prompts the first time a banner or badge is turned on.
+      if (on && key !== "bounce" && status?.permission === "not-determined") setStatus(await api.requestNotificationPermission());
+    } catch (e) {
+      fail(e);
+    }
+  };
+
+  const allowed = status?.permission === "authorized" || status?.permission === "provisional";
+  const openSettings = () => void api.openNotificationSettings().catch(fail);
+  const note = (() => {
+    if (!status) return null;
+    if (status.permission === "unavailable") return { text: "This build can’t post notifications. The installed Hoku app can.", fix: false };
+    if (status.permission === "denied" && (prefs.banners || prefs.badge)) return { text: "Notifications for Hoku are turned off in macOS.", fix: true };
+    if (prefs.banners && allowed && !status.alerts) return { text: "macOS is set not to show Hoku’s alerts.", fix: true };
+    if (prefs.badge && allowed && !status.badges) return { text: "macOS is set not to badge Hoku’s icon.", fix: true };
+    if (status.permission === "not-determined" && !prefs.banners) return { text: "macOS asks for permission when you turn notifications on.", fix: false };
+    return null;
+  })();
+
+  return (
+    <section>
+      <div className="eyebrow mb-2">Needs You alerts</div>
+      <Toggle label="Notify me when a session needs me" checked={prefs.banners} onChange={(x) => void set("banners", x)} />
+      <Toggle label="Show the Needs You count on the Dock icon" checked={prefs.badge} onChange={(x) => void set("badge", x)} />
+      <Toggle label="Bounce the Dock icon once" checked={prefs.bounce} onChange={(x) => void set("bounce", x)} />
+      {note && (
+        <div className="mt-2 flex items-center justify-between gap-3 rounded-[8px] border border-line bg-white/[0.02] px-2.5 py-1.5 text-[11.5px] text-ink-3">
+          <span>{note.text}</span>
+          {note.fix && (
+            <button className="btn h-6 shrink-0 px-2 text-[11px]" onClick={openSettings}>
+              Open System Settings
+            </button>
+          )}
+        </div>
+      )}
+      <p className="mt-1.5 text-[11.5px] leading-relaxed text-ink-4">
+        Hoku alerts once when a session starts waiting for your permission, answer or sign-in, and only while it’s running and its window isn’t in front. Alerts name the project and the kind of request, never the prompt, session title or files. Clicking one shows that session in Hoku; nothing is opened or sent until you choose to open it. Ready sessions and ordinary errors don’t alert. Focus and your macOS notification settings still apply.
+      </p>
+    </section>
   );
 }
 
