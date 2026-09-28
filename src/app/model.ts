@@ -51,7 +51,7 @@ export interface SystemModel {
   expanded: boolean;
 }
 
-const ZONE_OF = { live: 0, recent: 1, favorite: 2, archive: 2, hidden: 2 } as const;
+const ZONE_OF = { live: 0, recent: 1, favorite: 2, follow: 2, archive: 2, hidden: 2 } as const;
 
 /** Radius inside the Live zone: what needs you sits closest to the core. */
 const URGENCY: Record<StatusKey, number> = { needs_you: 0.08, error: 0.24, working: 0.45, ready: 0.72, idle: 1, offline: 0.9, unknown: 0.9 };

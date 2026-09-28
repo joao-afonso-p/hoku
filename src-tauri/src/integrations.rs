@@ -114,7 +114,7 @@ pub fn find_cli(name: &str, extra: &[PathBuf]) -> Option<PathBuf> {
     candidates.into_iter().find(|p| p.is_file())
 }
 
-fn cli_version(bin: &Path) -> Option<String> {
+pub(crate) fn cli_version(bin: &Path) -> Option<String> {
     let out = Command::new(bin).arg("--version").output().ok()?;
     let s = String::from_utf8_lossy(&out.stdout);
     s.split_whitespace()

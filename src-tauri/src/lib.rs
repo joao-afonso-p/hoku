@@ -9,6 +9,8 @@ mod integrations;
 mod launch;
 mod models;
 mod providers;
+mod recap;
+mod resume;
 mod runtime;
 mod scan;
 
@@ -31,6 +33,7 @@ pub fn run() {
             monitor: Arc::new(Mutex::new(runtime::MonitorState::default())),
             attention: Arc::new(Mutex::new(attention::Tracker::default())),
             claude_home: std::path::PathBuf::from(association::home_dir()).join(".claude"),
+            draft: Arc::new(Mutex::new(None)),
         };
         // Before anything else, so a notification click that launched Hoku is delivered.
         attention::install(app.handle());
@@ -55,11 +58,16 @@ pub fn run() {
                 commands::update_project,
                 commands::delete_project,
                 commands::archive_project,
+                commands::update_project_resume,
+                commands::ai_draft_status,
+                commands::prepare_resume_draft,
+                commands::generate_resume_draft,
                 commands::create_projects_from_suggestions,
                 commands::project_suggestions,
                 commands::parse_reference,
                 commands::add_manual_session,
                 commands::update_session,
+                commands::set_follow_up,
                 commands::delete_session,
                 commands::set_link,
                 commands::open_session,
@@ -68,6 +76,12 @@ pub fn run() {
                 commands::open_spaces_settings,
                 commands::reveal_path,
                 commands::open_provider_app,
+                commands::get_recap,
+                commands::create_outcome,
+                commands::update_outcome,
+                commands::delete_outcome,
+                commands::save_recap_image,
+                commands::copy_recap_image,
                 commands::scan_sessions,
                 commands::refresh_runtime,
                 commands::integration_status,

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { enterSession, focusProject, openOverlay, openSession, setListNull } from "./drawerActions";
-import { archiveProject, markActivitySeen, ACTIVITY_SEEN_KEY } from "../../app/actions";
+import { archiveProject, followUp, markActivitySeen, toggleResume, ACTIVITY_SEEN_KEY } from "../../app/actions";
 import { UNSORTED, type SystemModel } from "../../app/model";
 import { recencyTimestamp } from "../galaxy/visibility";
 import { getState, setState, useHub, type ActivityRange, type ListMode } from "../../app/store";
@@ -8,21 +8,26 @@ import { ageMs, DURATION, relativeTime } from "../../lib/time";
 import type { ActivityEvent, Project, Provider, Session } from "../../lib/types";
 import { PROVIDER_LIST, PROVIDERS, surfaceLabel } from "../../providers";
 import { GlyphIcon } from "../constellation/Glyph";
-import { IconArchive, IconArrowUpRight, IconClose, IconEdit, IconPlus } from "../../components/Icons";
+import { IconArchive, IconArrowUpRight, IconClose, IconEdit, IconFlag, IconFlagFilled, IconPlus, IconResume } from "../../components/Icons";
+import { FollowUpDrawer } from "../follow-up/FollowUpDrawer";
+import { RESUME_WIDTH } from "../resume/ResumeDrawer";
 import { ATTENTION, EVENT_TONE, EVENT_VERB, isInferred, reasonText, runtimeSummary, sortNeedsYou, STATUS, stateSince, statusKey } from "../runtime/status";
 import { RuntimeSummaryText, StatusDot, StatusLabel } from "../runtime/StatusMark";
 
 export const DRAWER_WIDTH = 300;
 const WIDE = 344;
 export function drawerWidth(mode: ListMode): number {
-  return mode === "needs" || mode === "activity" ? WIDE : DRAWER_WIDTH;
+  if (mode === "resume") return RESUME_WIDTH;
+  return mode === "needs" || mode === "follow" || mode === "activity" ? WIDE : DRAWER_WIDTH;
 }
 
 const TITLES: Record<ListMode, string> = {
   needs: "Needs You",
+  follow: "Follow up",
   activity: "Activity",
   favorites: "Favorites",
   projects: "Projects",
+  resume: "Resume",
 };
 
 const RANGE_MS: Record<ActivityRange, number> = { today: 0, "7d": 7 * DURATION.DAY, "30d": 30 * DURATION.DAY };
@@ -48,11 +53,14 @@ export function listHighlight(mode: ListMode, sessions: Session[], events: Activ
   switch (mode) {
     case "needs":
       return new Set(sortNeedsYou(sessions).map((s) => s.id));
+    case "follow":
+      return new Set(sessions.filter((s) => s.followUp).map((s) => s.id));
     case "activity":
       return new Set(activityEvents(events, sessions, range, provider).map((e) => e.sessionId));
     case "favorites":
       return new Set(sessions.filter((s) => s.favorite).map((s) => s.id));
     case "projects":
+    case "resume":
       return null;
   }
 }
@@ -90,6 +98,7 @@ export function ListDrawer({ mode, systems }: { mode: ListMode; systems: SystemM
   return (
     <aside className="panel slide-in-left absolute top-[52px] bottom-3 left-3 z-20 flex flex-col overflow-hidden rounded-[12px]" style={{ width }} onPointerDown={(e) => e.stopPropagation()}>
       {mode === "needs" && <NeedsYou projectById={projectById} />}
+      {mode === "follow" && <FollowUpDrawer projectById={projectById} header={(meta) => <Header title={TITLES.follow} meta={meta} />} />}
       {mode === "activity" && <Activity projectById={projectById} />}
       {mode === "favorites" && <Favorites projectById={projectById} />}
       {mode === "projects" && (
@@ -147,7 +156,7 @@ function NeedsYou({ projectById }: { projectById: Map<string, Project> }) {
           <div className="px-3 py-6 text-[12px] leading-relaxed text-ink-3">
             Nothing is waiting on you.
             <div className="mt-2 text-ink-4">
-              Sessions land here when they ask for permission, ask a question or need a decision. Finished sessions don’t: they’re Ready, and show up in Activity.
+              Sessions land here when they ask for permission, ask a question or need a decision. Finished sessions don’t: they’re Ready, and show up in Activity. To come back to one later, put it in Follow up.
             </div>
           </div>
         ) : (
@@ -285,29 +294,45 @@ function EventRow({ e, s, project, selected, fresh }: { e: ActivityEvent; s: Ses
   const tone = EVENT_TONE[e.type];
   const loud = tone === "needs_you" || tone === "error";
   return (
-    <button
-      className={`flex w-full items-start gap-2.5 rounded-[8px] px-2.5 py-1.5 text-left transition-colors ${selected ? "bg-white/[0.07]" : "hover:bg-white/[0.04]"}`}
-      onClick={() => enter(s)}
-      onDoubleClick={() => void openSession(s)}
-    >
-      <span className="w-[38px] shrink-0 pt-[1px] text-[11px] text-ink-4 tabular-nums">{clock(e.timestamp)}</span>
-      <span className="mt-[2px]">
-        <StatusDot status={tone} size={7} />
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-[12.5px]">
-          <span style={{ color: p.accent }}>{surfaceLabel(s)}</span>{" "}
-          <span style={{ color: loud ? STATUS[tone].color : undefined }} className={loud ? "" : "text-ink-2"}>
-            {EVENT_VERB[e.type]}
+    <div className={`group relative flex items-start rounded-[8px] transition-colors ${selected ? "bg-white/[0.07]" : "hover:bg-white/[0.04]"}`}>
+      <button
+        className="flex min-w-0 flex-1 items-start gap-2.5 px-2.5 py-1.5 text-left"
+        onClick={() => enter(s)}
+        onDoubleClick={() => void openSession(s)}
+      >
+        <span className="w-[38px] shrink-0 pt-[1px] text-[11px] text-ink-4 tabular-nums">{clock(e.timestamp)}</span>
+        <span className="mt-[2px]">
+          <StatusDot status={tone} size={7} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[12.5px]">
+            <span style={{ color: p.accent }}>{surfaceLabel(s)}</span>{" "}
+            <span style={{ color: loud ? STATUS[tone].color : undefined }} className={loud ? "" : "text-ink-2"}>
+              {EVENT_VERB[e.type]}
+            </span>
+            {fresh && e.type === "became_ready" && <span className="ml-1.5 text-[10.5px] text-ink-3">new</span>}
           </span>
-          {fresh && e.type === "became_ready" && <span className="ml-1.5 text-[10.5px] text-ink-3">new</span>}
+          <span className="block truncate text-[11.5px] text-ink-3">
+            {projectLabel(project)} · {s.title}
+          </span>
+          {e.reason && (e.type === "needs_input" || e.type === "error") && <span className="block truncate text-[11px] text-ink-4">{e.reason}</span>}
         </span>
-        <span className="block truncate text-[11.5px] text-ink-3">
-          {projectLabel(project)} · {s.title}
+      </button>
+      {s.followUp ? (
+        <span className="mt-[7px] mr-2.5 text-ink-3" title="In Follow up">
+          <IconFlagFilled size={12} />
         </span>
-        {e.reason && (e.type === "needs_input" || e.type === "error") && <span className="block truncate text-[11px] text-ink-4">{e.reason}</span>}
-      </span>
-    </button>
+      ) : (
+        <button
+          className="mt-[3px] mr-1.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-[6px] text-ink-4 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-white/[0.06] hover:text-ink-2 focus-visible:opacity-100"
+          onClick={() => void followUp(s)}
+          title="Follow up: review this session later (F)"
+          aria-label="Follow up"
+        >
+          <IconFlag size={12} />
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -378,7 +403,10 @@ function ProjectList({ systems }: { systems: SystemModel[] }) {
               )}
             </button>
             {sys.project && (
-              <span className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100">
+              <span className="flex items-center gap-1.5 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
+                <button className="text-ink-4 hover:text-ink-2" onClick={() => toggleResume(sys.project!.id)} title="Resume: what this project is, what changed, where to continue" aria-label="Resume project">
+                  <IconResume size={13} />
+                </button>
                 <button className="text-ink-4 hover:text-ink-2" onClick={() => void archiveProject(sys.project!.id, true)} title="Archive: hide from the Galaxy, keep everything" aria-label="Archive project">
                   <IconArchive size={13} />
                 </button>

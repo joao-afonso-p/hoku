@@ -3,7 +3,7 @@ import { isSessionVisible, visibilityFromSettings, VISIBILITY_KEYS, type GalaxyV
 import { notificationDestination } from "../features/notifications/notifications";
 import type { StatusKey } from "../features/runtime/status";
 import type { SessionFilter } from "../features/sessions/filter";
-import { api, type ProjectPatch, type SessionPatch } from "../lib/api";
+import { api, type FollowUpInput, type ProjectPatch, type ProjectResumePatch, type SessionPatch } from "../lib/api";
 import type { HubError, NotificationTarget, Session } from "../lib/types";
 import { getState, setState, type ListMode, type Overlay, type Toast } from "./store";
 
@@ -38,6 +38,9 @@ export async function reload() {
       selectedId: s.selectedId && data.sessions.some((x) => x.id === s.selectedId) ? s.selectedId : null,
       focus: s.focus && s.focus !== "unsorted" && !data.projects.some((p) => p.id === s.focus && !p.archivedAt) ? null : s.focus,
     }));
+    // Resume describes the focused project; without one there's nothing to show.
+    const s = getState();
+    if (s.list === "resume" && (!s.focus || s.focus === "unsorted")) setState({ list: null });
   } catch (e) {
     setState({ loaded: true, loadError: e as HubError });
   }
@@ -46,7 +49,20 @@ export async function reload() {
 // ───────────── navigation ─────────────
 
 export function focusProject(id: string | null) {
-  setState((s) => ({ focus: id, list: null, view: "galaxy", expanded: s.expanded === id ? s.expanded : null }));
+  // Resume follows you from project to project; every other drawer closes.
+  const keepResume = (s: { list: ListMode | null }) => s.list === "resume" && !!id && id !== "unsorted";
+  setState((s) => ({ focus: id, list: keepResume(s) ? "resume" : null, view: "galaxy", expanded: s.expanded === id ? s.expanded : null }));
+}
+
+/** Project Resume: focus the project and open its Resume drawer. */
+export function openResume(projectId: string) {
+  setState((s) => ({ focus: projectId, list: "resume", view: "galaxy", expanded: s.expanded === projectId ? s.expanded : null }));
+}
+
+export function toggleResume(projectId: string) {
+  const s = getState();
+  if (s.list === "resume" && s.focus === projectId && s.view === "galaxy") setState({ list: null });
+  else openResume(projectId);
 }
 
 /** Go to the Galaxy; if already there, re-frame all systems. */
@@ -58,6 +74,15 @@ export function showGalaxy() {
 
 export function showSessions() {
   setState((s) => ({ view: s.view === "sessions" && !s.list ? "galaxy" : "sessions", list: null }));
+}
+
+/** Recaps take the whole area; the inspector would only cover the share preview. */
+export function showRecaps() {
+  setState((s) => ({ view: s.view === "recaps" && !s.list ? "galaxy" : "recaps", list: null, selectedId: null }));
+}
+
+export function openRecaps() {
+  setState({ view: "recaps", list: null, selectedId: null });
 }
 
 // ───────────── runtime filters ─────────────
@@ -216,6 +241,46 @@ export async function toggleFavorite(s: Session) {
   await patchSession(s.id, { favorite: !s.favorite }, true);
 }
 
+// ───────────── follow up ─────────────
+
+async function writeFollowUp(id: string, followUp: FollowUpInput | null) {
+  await api.setFollowUp(id, followUp);
+  await reload();
+}
+
+/** Put a session in Follow up, or change when to be reminded (null = no date). */
+export async function followUp(s: Session, dueAt: string | null = null) {
+  try {
+    const before = s.followUp ?? null;
+    await writeFollowUp(s.id, { dueAt });
+    if (!before) {
+      toast({ tone: "success", message: "Added to Follow up", action: { label: "Undo", run: () => void writeFollowUp(s.id, null).catch(fail) } });
+    } else if (dueAt) {
+      toast({ tone: "success", message: `Reminder set for ${new Date(dueAt).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}` });
+    }
+  } catch (e) {
+    fail(e);
+  }
+}
+
+/** Done: out of the queue. Undo puts it back exactly as it was. */
+export async function followUpDone(s: Session) {
+  const before = s.followUp;
+  if (!before) return;
+  try {
+    await writeFollowUp(s.id, null);
+    toast({ tone: "info", message: "Done. Removed from Follow up", action: { label: "Undo", run: () => void writeFollowUp(s.id, { dueAt: before.dueAt ?? null, addedAt: before.addedAt }).catch(fail) } });
+  } catch (e) {
+    fail(e);
+  }
+}
+
+/** The F key: add the selected session, or mark it done. */
+export async function toggleFollowUp(s: Session) {
+  if (s.followUp) await followUpDone(s);
+  else await followUp(s);
+}
+
 export async function removeSession(s: Session) {
   try {
     await api.deleteSession(s.id);
@@ -257,6 +322,19 @@ export async function saveProject(id: string | null, input: { name: string; root
   } catch (e) {
     fail(e);
     return null;
+  }
+}
+
+/** Save the user's Resume text (or an accepted draft). Returns false when it didn't save. */
+export async function saveProjectResume(id: string, patch: ProjectResumePatch, message = "Saved"): Promise<boolean> {
+  try {
+    await api.updateProjectResume(id, patch);
+    await reload();
+    toast({ tone: "success", message });
+    return true;
+  } catch (e) {
+    fail(e);
+    return false;
   }
 }
 

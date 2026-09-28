@@ -69,6 +69,11 @@ export interface Project {
   isDemo: boolean;
   /** Archived: off the Galaxy, still searchable, restorable in place. */
   archivedAt?: string | null;
+  /** Project Resume: what this project is, in the user's words (or an accepted AI draft). */
+  description?: string | null;
+  /** Project Resume: where to pick up next. */
+  nextStep?: string | null;
+  resumeUpdatedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -107,8 +112,21 @@ export interface Session {
   projectLocked: boolean;
   titleLocked: boolean;
   sourceMissing: boolean;
+  /** In the user's Follow up queue. User-owned; scans and the runtime monitor never touch it. */
+  followUp?: FollowUp | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * The user's own intention to come back to a session ("Review later"). Not a runtime state:
+ * Needs You is a provider blocking on a human; Follow up is the human's reminder.
+ */
+export interface FollowUp {
+  /** When it was put in the queue. */
+  addedAt: string;
+  /** Remind at / snoozed until. null = no date. */
+  dueAt?: string | null;
 }
 
 export interface SessionLink {
@@ -235,4 +253,132 @@ export interface ProviderGroup {
   account: IntegrationAccount;
   components: IntegrationComponent[];
   capabilities: IntegrationCapability[];
+}
+
+// ───── Recaps (src-tauri/src/recap.rs) ─────
+
+export interface RecapQuery {
+  since: string;
+  until: string;
+  utcOffsetMinutes: number;
+  /** Project ids or "unsorted". Empty = every project. */
+  projects: string[];
+}
+
+export interface RecapDay {
+  /** Local calendar day, YYYY-MM-DD. */
+  date: string;
+  /** Distinct sessions active that day. */
+  sessions: number;
+  /** Hoku recorded a runtime transition that day (any project). */
+  observed: boolean;
+}
+
+export interface RecapTotals {
+  projects: number;
+  sessions: number;
+  activeDays: number;
+  observedSessions: number;
+  workStarts: number;
+  /** Turns that finished and handed back. Never "tasks completed". */
+  readyTransitions: number;
+  inputRequests: number;
+}
+
+export interface RecapProvider {
+  provider: Provider;
+  sessions: number;
+}
+
+export interface RecapProject {
+  /** Project id or "unsorted". */
+  key: string;
+  name: string;
+  color?: string | null;
+  isDemo: boolean;
+  archived: boolean;
+  sessions: number;
+  activeDays: number;
+  readyTransitions: number;
+  pullRequests: number;
+  providers: RecapProvider[];
+  lastActivityAt?: string | null;
+}
+
+export interface RecapPullRequest {
+  sessionId: string;
+  projectKey: string;
+  url: string;
+  repo?: string | null;
+  number?: number | null;
+  lastActivityAt?: string | null;
+}
+
+export interface RecapCoverage {
+  retentionDays: number;
+  historySince?: string | null;
+  historyCoversRange: boolean;
+  observedDays: number;
+  rangeDays: number;
+}
+
+/** A milestone the user wrote. Hoku never creates these. */
+export interface Outcome {
+  id: string;
+  projectId?: string | null;
+  text: string;
+  /** Local calendar day, YYYY-MM-DD. */
+  occurredOn: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OutcomeInput {
+  projectId?: string | null;
+  text: string;
+  occurredOn: string;
+}
+
+export interface Recap {
+  since: string;
+  until: string;
+  days: RecapDay[];
+  totals: RecapTotals;
+  providers: RecapProvider[];
+  projects: RecapProject[];
+  pullRequests: RecapPullRequest[];
+  outcomes: Outcome[];
+  coverage: RecapCoverage;
+}
+
+/** The optional AI draft provider (src-tauri/src/resume.rs). */
+export interface DraftProviderStatus {
+  provider: "claude-code";
+  /** The user turned drafts on in Settings. Off by default. */
+  enabled: boolean;
+  installed: boolean;
+  version?: string | null;
+  /** null when the CLI's status couldn't be read. */
+  signedIn?: boolean | null;
+  /** The CLI supports every flag Hoku needs for a tool-less, session-less run. */
+  supported: boolean;
+  missingFlags: string[];
+}
+
+/** Exactly what Generate would send, for the user to inspect first. */
+export interface PreparedDraft {
+  token: string;
+  systemPrompt: string;
+  prompt: string;
+  sessionCount: number;
+  eventCount: number;
+  noteCount: number;
+  hasDescription: boolean;
+  hasNextStep: boolean;
+}
+
+/** An unsaved, editable draft. */
+export interface ResumeDraft {
+  description?: string | null;
+  nextStep?: string | null;
 }

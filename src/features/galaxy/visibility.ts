@@ -75,15 +75,17 @@ export function isRecent(s: Session, windowDays: number, now = Date.now()): bool
 /**
  * Why a session is (or isn't) on the map. Also drives its visual treatment.
  * Runtime state and recency are separate dimensions: a live session is always shown however
- * old its last activity; an offline one only while it's recent (or a favorite).
+ * old its last activity; an offline one only while it's recent, a favorite, or in Follow up.
  */
-export type VisibilityReason = "live" | "recent" | "favorite" | "archive" | "hidden";
+export type VisibilityReason = "live" | "recent" | "favorite" | "follow" | "archive" | "hidden";
 
 export function visibilityReason(s: Session, v: GalaxyVisibility, now = Date.now()): VisibilityReason {
   // What needs you is never hidden, whatever the settings say.
   if (needsYou(s) || (v.alwaysShowActive && isLive(s))) return "live";
   if (isRecent(s, v.recentWindowDays, now)) return "recent";
   if (v.alwaysShowFavorites && s.favorite) return "favorite";
+  // The user asked to come back to it, so it stays findable where they left it.
+  if (s.followUp) return "follow";
   return v.mode === "all" ? "archive" : "hidden";
 }
 

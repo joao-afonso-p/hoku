@@ -176,6 +176,12 @@ pub struct Project {
     pub is_demo: bool,
     /// Archived projects leave the Galaxy but keep sessions, root and slot. Restorable.
     pub archived_at: Option<String>,
+    /// Project Resume: what this project is, in the user's words (or an accepted AI draft).
+    pub description: Option<String>,
+    /// Project Resume: where to pick up next, in the user's words.
+    pub next_step: Option<String>,
+    /// When the description or next step last changed.
+    pub resume_updated_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -224,8 +230,21 @@ pub struct Session {
     pub title_locked: bool,
     /// The provider no longer has this session on disk (e.g. pruned transcript).
     pub source_missing: bool,
+    /// In the user's Follow up queue. User-owned; scans and the runtime monitor never touch it.
+    pub follow_up: Option<FollowUp>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+/// The user's intention to come back to a session ("Review later"). Not a runtime state:
+/// Needs You is the provider blocking on a human, Follow up is the human's own reminder.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FollowUp {
+    /// When it was put in the queue.
+    pub added_at: String,
+    /// Remind at / snoozed until. None = no date, just "later".
+    pub due_at: Option<String>,
 }
 
 /// What a provider adapter reports for one session. Normalized; no UI concerns.

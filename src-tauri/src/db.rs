@@ -130,6 +130,32 @@ const MIGRATIONS: &[&str] = &[
     r#"
     ALTER TABLE projects ADD COLUMN archived_at TEXT;
     "#,
+    // v4 — Project Resume: a user-written description and next step. Owned by the user; scans,
+    // re-association and project edits never touch them.
+    r#"
+    ALTER TABLE projects ADD COLUMN description TEXT;
+    ALTER TABLE projects ADD COLUMN next_step TEXT;
+    ALTER TABLE projects ADD COLUMN resume_updated_at TEXT;
+    "#,
+    // v5 — recap outcomes: one-line milestones the user writes for a recap. Never inferred.
+    // Deleting a project keeps its outcomes (they become project-less).
+    r#"
+    CREATE TABLE recap_outcomes (
+        id           TEXT PRIMARY KEY,
+        project_id   TEXT REFERENCES projects(id) ON DELETE SET NULL,
+        text         TEXT NOT NULL,
+        occurred_on  TEXT NOT NULL,
+        created_at   TEXT NOT NULL,
+        updated_at   TEXT NOT NULL
+    );
+    CREATE INDEX idx_recap_outcomes_day ON recap_outcomes(occurred_on);
+    "#,
+    // v6 — Follow up: the user's own review-later queue. User-owned like `favorite` and
+    // `notes`: scans and the runtime monitor never write these columns.
+    r#"
+    ALTER TABLE sessions ADD COLUMN follow_up_at      TEXT;
+    ALTER TABLE sessions ADD COLUMN follow_up_due_at  TEXT;
+    "#,
 ];
 
 /// The bundle identifier before Hoku had its own (`com.hoku.app`). The app-data folder is
@@ -202,6 +228,9 @@ fn row_project(r: &Row) -> rusqlite::Result<Project> {
         slot: r.get("slot")?,
         is_demo: r.get::<_, i64>("is_demo")? != 0,
         archived_at: r.get("archived_at")?,
+        description: r.get("description")?,
+        next_step: r.get("next_step")?,
+        resume_updated_at: r.get("resume_updated_at")?,
         created_at: r.get("created_at")?,
         updated_at: r.get("updated_at")?,
     })
@@ -325,6 +354,47 @@ pub fn set_project_archived(conn: &Connection, id: &str, archived: bool) -> HubR
     Ok(get_project(conn, id)?.expect("exists"))
 }
 
+/// Longest project description we keep. A paragraph, not a document.
+pub const DESCRIPTION_MAX: usize = 600;
+/// Longest next step we keep.
+pub const NEXT_STEP_MAX: usize = 280;
+
+/// Trim, collapse to `None` when empty, and refuse anything over `max` characters rather than
+/// silently cutting what the user wrote.
+fn resume_text(v: Option<String>, max: usize, what: &str) -> HubResult<Option<String>> {
+    let Some(t) = v.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()) else {
+        return Ok(None);
+    };
+    if t.chars().count() > max {
+        return Err(HubError::new(format!(
+            "Keep the {what} under {max} characters."
+        )));
+    }
+    Ok(Some(t))
+}
+
+/// Set a project's Resume fields. `None` leaves a field alone; `Some(None)` clears it.
+pub fn update_project_resume(
+    conn: &Connection,
+    id: &str,
+    description: Option<Option<String>>,
+    next_step: Option<Option<String>>,
+) -> HubResult<Project> {
+    let mut p =
+        get_project(conn, id)?.ok_or_else(|| HubError::new("That project no longer exists."))?;
+    if let Some(d) = description {
+        p.description = resume_text(d, DESCRIPTION_MAX, "description")?;
+    }
+    if let Some(n) = next_step {
+        p.next_step = resume_text(n, NEXT_STEP_MAX, "next step")?;
+    }
+    conn.execute(
+        "UPDATE projects SET description=?2, next_step=?3, resume_updated_at=?4 WHERE id=?1",
+        params![id, p.description, p.next_step, now_iso()],
+    )?;
+    Ok(get_project(conn, id)?.expect("exists"))
+}
+
 pub fn delete_project(conn: &Connection, id: &str) -> HubResult<()> {
     // Sessions fall back to Unsorted; explicit assignment to this project is released.
     conn.execute(
@@ -375,6 +445,15 @@ fn row_session(r: &Row) -> rusqlite::Result<Session> {
         project_locked: r.get::<_, i64>("project_locked")? != 0,
         title_locked: r.get::<_, i64>("title_locked")? != 0,
         source_missing: r.get::<_, i64>("source_missing")? != 0,
+        follow_up: r
+            .get::<_, Option<String>>("follow_up_at")?
+            .map(|added_at| -> rusqlite::Result<FollowUp> {
+                Ok(FollowUp {
+                    added_at,
+                    due_at: r.get("follow_up_due_at")?,
+                })
+            })
+            .transpose()?,
         created_at: r.get("created_at")?,
         updated_at: r.get("updated_at")?,
     })
@@ -560,6 +639,56 @@ pub fn update_session(conn: &Connection, id: &str, patch: SessionPatch) -> HubRe
     Ok(get_session(conn, id)?.expect("exists"))
 }
 
+/// Parse a timestamp from the UI and store it in one canonical form (UTC, milliseconds), so
+/// string comparison orders it correctly.
+fn canonical_time(value: &str, what: &str) -> HubResult<String> {
+    chrono::DateTime::parse_from_rfc3339(value.trim())
+        .map(|t| {
+            t.with_timezone(&Utc)
+                .to_rfc3339_opts(SecondsFormat::Millis, true)
+        })
+        .map_err(|e| HubError::with_detail(format!("That {what} isn't a valid date."), e))
+}
+
+pub struct FollowUpInput {
+    /// Remind at / snooze until. None = no date.
+    pub due_at: Option<String>,
+    /// Only used when the session isn't queued yet (e.g. undoing Done); otherwise the
+    /// original time is kept, so rescheduling doesn't reset how long it has waited.
+    pub added_at: Option<String>,
+}
+
+/// Put a session in the Follow up queue, reschedule it, or (None) clear it: Done.
+pub fn set_follow_up(
+    conn: &Connection,
+    id: &str,
+    input: Option<FollowUpInput>,
+) -> HubResult<Session> {
+    let s =
+        get_session(conn, id)?.ok_or_else(|| HubError::new("That session no longer exists."))?;
+    let (added, due) = match input {
+        None => (None, None),
+        Some(f) => {
+            let added = match (&s.follow_up, f.added_at) {
+                (Some(existing), _) => existing.added_at.clone(),
+                (None, Some(at)) => canonical_time(&at, "queue time")?,
+                (None, None) => now_iso(),
+            };
+            let due = f
+                .due_at
+                .filter(|d| !d.trim().is_empty())
+                .map(|d| canonical_time(&d, "reminder"))
+                .transpose()?;
+            (Some(added), due)
+        }
+    };
+    conn.execute(
+        "UPDATE sessions SET follow_up_at = ?2, follow_up_due_at = ?3, updated_at = ?4 WHERE id = ?1",
+        params![id, added, due, now_iso()],
+    )?;
+    Ok(get_session(conn, id)?.expect("exists"))
+}
+
 pub fn delete_session(conn: &Connection, id: &str) -> HubResult<()> {
     conn.execute("DELETE FROM sessions WHERE id = ?", [id])?;
     Ok(())
@@ -689,7 +818,7 @@ pub enum UpsertOutcome {
 }
 
 /// Merge a discovered session into the hub. User-owned fields (title if renamed, notes,
-/// favorite, locked project) are never overwritten by a scan.
+/// favorite, locked project, follow up) are never overwritten by a scan.
 pub fn upsert_discovered(
     conn: &Connection,
     provider: Provider,
@@ -1004,6 +1133,10 @@ pub fn snapshot(conn: &Connection) -> rusqlite::Result<HubSnapshot> {
 
 pub fn clear_demo(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute("DELETE FROM sessions WHERE source = 'demo'", [])?;
+    conn.execute(
+        "DELETE FROM recap_outcomes WHERE project_id IN (SELECT id FROM projects WHERE is_demo = 1)",
+        [],
+    )?;
     conn.execute("DELETE FROM projects WHERE is_demo = 1", [])?;
     Ok(())
 }
@@ -1220,6 +1353,259 @@ mod tests {
             get_session(&c, "b").unwrap().unwrap().runtime.state,
             RuntimeState::Working
         );
+    }
+
+    fn discovered(conn: &Connection, ext: &str) -> Session {
+        let d = DiscoveredSession {
+            external_id: ext.into(),
+            title: "Scanned".into(),
+            ..Default::default()
+        };
+        upsert_discovered(conn, Provider::Codex, "codex-state-db", &d, None, None).unwrap();
+        find_session_by_external(conn, Provider::Codex, ext)
+            .unwrap()
+            .unwrap()
+    }
+
+    #[test]
+    fn follow_up_can_be_queued_rescheduled_and_done() {
+        let c = open_in_memory();
+        let s = discovered(&c, "f1");
+        assert_eq!(s.follow_up, None);
+
+        let queued = set_follow_up(
+            &c,
+            &s.id,
+            Some(FollowUpInput {
+                due_at: None,
+                added_at: None,
+            }),
+        )
+        .unwrap();
+        let added = queued.follow_up.clone().unwrap().added_at;
+        assert_eq!(queued.follow_up.as_ref().unwrap().due_at, None);
+
+        // A reminder in any offset is stored as canonical UTC, and keeps the queue time.
+        let later = set_follow_up(
+            &c,
+            &s.id,
+            Some(FollowUpInput {
+                due_at: Some("2026-10-01T09:00:00+01:00".into()),
+                added_at: Some("2020-01-01T00:00:00Z".into()),
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            later.follow_up,
+            Some(FollowUp {
+                added_at: added,
+                due_at: Some("2026-10-01T08:00:00.000Z".into()),
+            })
+        );
+
+        assert!(set_follow_up(
+            &c,
+            &s.id,
+            Some(FollowUpInput {
+                due_at: Some("next tuesday".into()),
+                added_at: None,
+            }),
+        )
+        .is_err());
+        assert!(get_session(&c, &s.id)
+            .unwrap()
+            .unwrap()
+            .follow_up
+            .unwrap()
+            .due_at
+            .is_some());
+
+        let done = set_follow_up(&c, &s.id, None).unwrap();
+        assert_eq!(done.follow_up, None);
+
+        // Undoing Done restores the original queue time.
+        let restored = set_follow_up(
+            &c,
+            &s.id,
+            Some(FollowUpInput {
+                due_at: None,
+                added_at: Some("2026-09-01T10:00:00.000Z".into()),
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            restored.follow_up.unwrap().added_at,
+            "2026-09-01T10:00:00.000Z"
+        );
+        assert!(set_follow_up(&c, "missing", None).is_err());
+    }
+
+    #[test]
+    fn scans_and_runtime_never_reset_follow_up() {
+        let c = open_in_memory();
+        let s = discovered(&c, "keep");
+        set_follow_up(
+            &c,
+            &s.id,
+            Some(FollowUpInput {
+                due_at: Some("2026-10-01T09:00:00Z".into()),
+                added_at: None,
+            }),
+        )
+        .unwrap();
+        let before = get_session(&c, &s.id).unwrap().unwrap().follow_up;
+
+        // Rescan with fresher data, lose it at the source, find it again.
+        let d = DiscoveredSession {
+            external_id: "keep".into(),
+            title: "Renamed upstream".into(),
+            last_activity_at: Some(now_iso()),
+            ..Default::default()
+        };
+        upsert_discovered(&c, Provider::Codex, "codex-state-db", &d, None, None).unwrap();
+        flag_missing(&c, Provider::Codex, "codex-state-db", &[]).unwrap();
+        upsert_discovered(&c, Provider::Codex, "codex-state-db", &d, None, None).unwrap();
+        // The monitor writes state, heartbeats and activity.
+        let rt = RuntimeStatus {
+            state: RuntimeState::Working,
+            confidence: Confidence::High,
+            reason: None,
+            detail: None,
+            source: Some("codex-rollout".into()),
+            action_required: false,
+            since: None,
+            last_observed_at: Some(now_iso()),
+        };
+        write_runtime(&c, &s.id, &rt).unwrap();
+        touch_runtime(&c, std::slice::from_ref(&s.id), &now_iso()).unwrap();
+        bump_last_activity(&c, &s.id, &now_iso()).unwrap();
+        // Unrelated user edits don't clear it either.
+        update_session(
+            &c,
+            &s.id,
+            SessionPatch {
+                favorite: Some(true),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let after = get_session(&c, &s.id).unwrap().unwrap();
+        assert_eq!(after.title, "Renamed upstream");
+        assert_eq!(after.follow_up, before);
+        assert!(after.follow_up.is_some());
+    }
+
+    #[test]
+    fn migrates_a_v3_database_keeping_user_flags() {
+        let c = Connection::open_in_memory().unwrap();
+        for (i, sql) in MIGRATIONS[..3].iter().enumerate() {
+            c.execute_batch(&format!(
+                "BEGIN; {sql}; PRAGMA user_version = {}; COMMIT;",
+                i + 1
+            ))
+            .unwrap();
+        }
+        c.execute_batch(
+            "INSERT INTO sessions (id, provider, title, source, favorite, notes, title_locked, created_at, updated_at)
+               VALUES ('a','codex','Mine','codex-state-db',1,'keep me',1,'t','t');",
+        )
+        .unwrap();
+        migrate(&c).unwrap();
+        let s = get_session(&c, "a").unwrap().unwrap();
+        assert_eq!(
+            (s.favorite, s.notes.as_deref(), s.title_locked),
+            (true, Some("keep me"), true)
+        );
+        assert_eq!(s.follow_up, None, "nothing is queued by the migration");
+    }
+
+    #[test]
+    fn migrates_a_v3_database_keeping_projects_and_adding_resume_fields() {
+        let c = Connection::open_in_memory().unwrap();
+        for (i, sql) in MIGRATIONS.iter().take(3).enumerate() {
+            c.execute_batch(&format!(
+                "BEGIN; {sql}; PRAGMA user_version = {}; COMMIT;",
+                i + 1
+            ))
+            .unwrap();
+        }
+        c.execute_batch(
+            "INSERT INTO projects (id, name, root_path, slot, created_at, updated_at, archived_at)
+               VALUES ('p','Atlas','/u/atlas',4,'t','t',NULL), ('q','Old','/u/old',2,'t','t','t2');
+             INSERT INTO sessions (id, provider, title, project_id, notes, source, created_at, updated_at)
+               VALUES ('a','codex','Real','p','keep me','codex-state-db','t','t');",
+        )
+        .unwrap();
+        migrate(&c).unwrap();
+        let p = get_project(&c, "p").unwrap().unwrap();
+        assert_eq!(
+            (p.name.as_str(), p.slot, p.root_path.as_deref()),
+            ("Atlas", 4, Some("/u/atlas"))
+        );
+        assert_eq!((p.description, p.next_step), (None, None));
+        assert_eq!(
+            get_project(&c, "q")
+                .unwrap()
+                .unwrap()
+                .archived_at
+                .as_deref(),
+            Some("t2")
+        );
+        assert_eq!(
+            get_session(&c, "a").unwrap().unwrap().notes.as_deref(),
+            Some("keep me")
+        );
+    }
+
+    #[test]
+    fn resume_fields_are_user_owned_and_validated() {
+        let c = open_in_memory();
+        let p = project(&c, "Atlas", Some("/u/atlas"));
+        let p2 = update_project_resume(
+            &c,
+            &p.id,
+            Some(Some("  Billing service  ".into())),
+            Some(Some("Answer the queue question".into())),
+        )
+        .unwrap();
+        assert_eq!(p2.description.as_deref(), Some("Billing service"));
+        assert!(p2.resume_updated_at.is_some());
+        // Other edits, scans and re-association leave them alone.
+        update_project(&c, &p.id, Some("Atlas 2".into()), None, None, None).unwrap();
+        let d = DiscoveredSession {
+            external_id: "s".into(),
+            title: "t".into(),
+            working_directory: Some("/u/atlas/src".into()),
+            ..Default::default()
+        };
+        upsert_discovered(
+            &c,
+            Provider::Codex,
+            "codex-state-db",
+            &d,
+            Some(p.id.clone()),
+            None,
+        )
+        .unwrap();
+        crate::scan::reassociate(&c).unwrap();
+        let p3 = get_project(&c, &p.id).unwrap().unwrap();
+        assert_eq!(p3.description.as_deref(), Some("Billing service"));
+        assert_eq!(p3.next_step.as_deref(), Some("Answer the queue question"));
+        // `None` leaves a field; blank clears it; too long is refused, not cut.
+        let p4 = update_project_resume(&c, &p.id, None, Some(Some("   ".into()))).unwrap();
+        assert_eq!(
+            (p4.description.as_deref(), p4.next_step),
+            (Some("Billing service"), None)
+        );
+        assert!(update_project_resume(
+            &c,
+            &p.id,
+            Some(Some("x".repeat(DESCRIPTION_MAX + 1))),
+            None
+        )
+        .is_err());
+        assert!(update_project_resume(&c, "missing", None, None).is_err());
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! Demo constellation for exercising layout density. Always tagged: projects have
 //! `is_demo = 1`, sessions have `source = 'demo'`. Demo sessions cannot be opened.
 
-use crate::db::{self, ManualSessionInput, ProjectInput};
+use crate::db::{self, FollowUpInput, ManualSessionInput, ProjectInput};
 use crate::models::{ActivityEvent, Confidence, HubResult, Provider, RuntimeState, RuntimeStatus};
 use rusqlite::Connection;
 use serde_json::json;
@@ -148,6 +148,15 @@ pub fn load(conn: &Connection) -> HubResult<()> {
                 is_demo: true,
             },
         )?;
+        // One demo project shows a filled-in Resume; the others show its empty states.
+        if system == 0 {
+            db::update_project_resume(
+                conn,
+                &project.id,
+                Some(Some("Demo · A web app for tracking team goals. Current focus: auth refactor and the evaluation pipeline.".into())),
+                Some(Some("Approve the pending Bash permission, then review the auth refactor branch.".into())),
+            )?;
+        }
         for i in 0..*count {
             let provider = match (rng.next() * 3.0) as u32 {
                 0 => Provider::ClaudeCode,
@@ -203,6 +212,62 @@ pub fn load(conn: &Connection) -> HubResult<()> {
                     favorite: rng.next() > 0.9,
                 },
             )?;
+            // A few review-later items: overdue, due soon, upcoming and undated.
+            let iso = |t: chrono::DateTime<chrono::Utc>| {
+                t.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+            };
+            let follow_up = match (system, i) {
+                (0, 2) => Some((now - chrono::Duration::minutes(12), None)),
+                (1, 2) => Some((
+                    now - chrono::Duration::hours(1),
+                    Some(now + chrono::Duration::hours(2)),
+                )),
+                (0, 9) => Some((
+                    now - chrono::Duration::days(3),
+                    Some(now - chrono::Duration::hours(20)),
+                )),
+                (2, 3) => Some((
+                    now - chrono::Duration::days(1),
+                    Some(now + chrono::Duration::days(3)),
+                )),
+                _ => None,
+            };
+            if let Some((added, due)) = follow_up {
+                db::set_follow_up(
+                    conn,
+                    &session.id,
+                    Some(FollowUpInput {
+                        due_at: due.map(iso),
+                        added_at: Some(iso(added)),
+                    }),
+                )?;
+            }
+            // A few sessions carry a branch, a PR and a note, like real ones do.
+            if system == 0 && i < 5 {
+                let branch = [
+                    "feat/auth-refactor",
+                    "fix/eval-flakes",
+                    "feat/eval-pipeline",
+                    "main",
+                    "chore/tokens",
+                ][i];
+                let note = match i {
+                    0 => Some("Demo note · Needs a decision on running the migration script."),
+                    2 => Some("Demo note · Check the eval numbers before merging."),
+                    _ => None,
+                };
+                conn.execute(
+                    "UPDATE sessions SET branch = ?2, notes = COALESCE(?3, notes),
+                        metadata = CASE WHEN ?4 IS NULL THEN metadata ELSE json_set(metadata, '$.prUrl', ?4) END
+                     WHERE id = ?1",
+                    rusqlite::params![
+                        session.id,
+                        branch,
+                        note,
+                        (i == 2).then_some("https://github.com/example/demo/pull/128")
+                    ],
+                )?;
+            }
             // A short history, so the Activity timeline has something to show.
             let id = &session.id;
             match state {
