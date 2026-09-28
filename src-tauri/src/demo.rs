@@ -1,7 +1,7 @@
 //! Demo constellation for exercising layout density. Always tagged: projects have
 //! `is_demo = 1`, sessions have `source = 'demo'`. Demo sessions cannot be opened.
 
-use crate::db::{self, ManualSessionInput, ProjectInput};
+use crate::db::{self, FollowUpInput, ManualSessionInput, ProjectInput};
 use crate::models::{ActivityEvent, Confidence, HubResult, Provider, RuntimeState, RuntimeStatus};
 use rusqlite::Connection;
 use serde_json::json;
@@ -212,6 +212,36 @@ pub fn load(conn: &Connection) -> HubResult<()> {
                     favorite: rng.next() > 0.9,
                 },
             )?;
+            // A few review-later items: overdue, due soon, upcoming and undated.
+            let iso = |t: chrono::DateTime<chrono::Utc>| {
+                t.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+            };
+            let follow_up = match (system, i) {
+                (0, 2) => Some((now - chrono::Duration::minutes(12), None)),
+                (1, 2) => Some((
+                    now - chrono::Duration::hours(1),
+                    Some(now + chrono::Duration::hours(2)),
+                )),
+                (0, 9) => Some((
+                    now - chrono::Duration::days(3),
+                    Some(now - chrono::Duration::hours(20)),
+                )),
+                (2, 3) => Some((
+                    now - chrono::Duration::days(1),
+                    Some(now + chrono::Duration::days(3)),
+                )),
+                _ => None,
+            };
+            if let Some((added, due)) = follow_up {
+                db::set_follow_up(
+                    conn,
+                    &session.id,
+                    Some(FollowUpInput {
+                        due_at: due.map(iso),
+                        added_at: Some(iso(added)),
+                    }),
+                )?;
+            }
             // A few sessions carry a branch, a PR and a note, like real ones do.
             if system == 0 && i < 5 {
                 let branch = [

@@ -150,6 +150,12 @@ const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX idx_recap_outcomes_day ON recap_outcomes(occurred_on);
     "#,
+    // v6 — Follow up: the user's own review-later queue. User-owned like `favorite` and
+    // `notes`: scans and the runtime monitor never write these columns.
+    r#"
+    ALTER TABLE sessions ADD COLUMN follow_up_at      TEXT;
+    ALTER TABLE sessions ADD COLUMN follow_up_due_at  TEXT;
+    "#,
 ];
 
 /// The bundle identifier before Hoku had its own (`com.hoku.app`). The app-data folder is
@@ -439,6 +445,15 @@ fn row_session(r: &Row) -> rusqlite::Result<Session> {
         project_locked: r.get::<_, i64>("project_locked")? != 0,
         title_locked: r.get::<_, i64>("title_locked")? != 0,
         source_missing: r.get::<_, i64>("source_missing")? != 0,
+        follow_up: r
+            .get::<_, Option<String>>("follow_up_at")?
+            .map(|added_at| -> rusqlite::Result<FollowUp> {
+                Ok(FollowUp {
+                    added_at,
+                    due_at: r.get("follow_up_due_at")?,
+                })
+            })
+            .transpose()?,
         created_at: r.get("created_at")?,
         updated_at: r.get("updated_at")?,
     })
@@ -591,6 +606,56 @@ pub fn update_session(conn: &Connection, id: &str, patch: SessionPatch) -> HubRe
     Ok(get_session(conn, id)?.expect("exists"))
 }
 
+/// Parse a timestamp from the UI and store it in one canonical form (UTC, milliseconds), so
+/// string comparison orders it correctly.
+fn canonical_time(value: &str, what: &str) -> HubResult<String> {
+    chrono::DateTime::parse_from_rfc3339(value.trim())
+        .map(|t| {
+            t.with_timezone(&Utc)
+                .to_rfc3339_opts(SecondsFormat::Millis, true)
+        })
+        .map_err(|e| HubError::with_detail(format!("That {what} isn't a valid date."), e))
+}
+
+pub struct FollowUpInput {
+    /// Remind at / snooze until. None = no date.
+    pub due_at: Option<String>,
+    /// Only used when the session isn't queued yet (e.g. undoing Done); otherwise the
+    /// original time is kept, so rescheduling doesn't reset how long it has waited.
+    pub added_at: Option<String>,
+}
+
+/// Put a session in the Follow up queue, reschedule it, or (None) clear it: Done.
+pub fn set_follow_up(
+    conn: &Connection,
+    id: &str,
+    input: Option<FollowUpInput>,
+) -> HubResult<Session> {
+    let s =
+        get_session(conn, id)?.ok_or_else(|| HubError::new("That session no longer exists."))?;
+    let (added, due) = match input {
+        None => (None, None),
+        Some(f) => {
+            let added = match (&s.follow_up, f.added_at) {
+                (Some(existing), _) => existing.added_at.clone(),
+                (None, Some(at)) => canonical_time(&at, "queue time")?,
+                (None, None) => now_iso(),
+            };
+            let due = f
+                .due_at
+                .filter(|d| !d.trim().is_empty())
+                .map(|d| canonical_time(&d, "reminder"))
+                .transpose()?;
+            (Some(added), due)
+        }
+    };
+    conn.execute(
+        "UPDATE sessions SET follow_up_at = ?2, follow_up_due_at = ?3, updated_at = ?4 WHERE id = ?1",
+        params![id, added, due, now_iso()],
+    )?;
+    Ok(get_session(conn, id)?.expect("exists"))
+}
+
 pub fn delete_session(conn: &Connection, id: &str) -> HubResult<()> {
     conn.execute("DELETE FROM sessions WHERE id = ?", [id])?;
     Ok(())
@@ -720,7 +785,7 @@ pub enum UpsertOutcome {
 }
 
 /// Merge a discovered session into the hub. User-owned fields (title if renamed, notes,
-/// favorite, locked project) are never overwritten by a scan.
+/// favorite, locked project, follow up) are never overwritten by a scan.
 pub fn upsert_discovered(
     conn: &Connection,
     provider: Provider,
@@ -1255,6 +1320,171 @@ mod tests {
             get_session(&c, "b").unwrap().unwrap().runtime.state,
             RuntimeState::Working
         );
+    }
+
+    fn discovered(conn: &Connection, ext: &str) -> Session {
+        let d = DiscoveredSession {
+            external_id: ext.into(),
+            title: "Scanned".into(),
+            ..Default::default()
+        };
+        upsert_discovered(conn, Provider::Codex, "codex-state-db", &d, None, None).unwrap();
+        find_session_by_external(conn, Provider::Codex, ext)
+            .unwrap()
+            .unwrap()
+    }
+
+    #[test]
+    fn follow_up_can_be_queued_rescheduled_and_done() {
+        let c = open_in_memory();
+        let s = discovered(&c, "f1");
+        assert_eq!(s.follow_up, None);
+
+        let queued = set_follow_up(
+            &c,
+            &s.id,
+            Some(FollowUpInput {
+                due_at: None,
+                added_at: None,
+            }),
+        )
+        .unwrap();
+        let added = queued.follow_up.clone().unwrap().added_at;
+        assert_eq!(queued.follow_up.as_ref().unwrap().due_at, None);
+
+        // A reminder in any offset is stored as canonical UTC, and keeps the queue time.
+        let later = set_follow_up(
+            &c,
+            &s.id,
+            Some(FollowUpInput {
+                due_at: Some("2026-10-01T09:00:00+01:00".into()),
+                added_at: Some("2020-01-01T00:00:00Z".into()),
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            later.follow_up,
+            Some(FollowUp {
+                added_at: added,
+                due_at: Some("2026-10-01T08:00:00.000Z".into()),
+            })
+        );
+
+        assert!(set_follow_up(
+            &c,
+            &s.id,
+            Some(FollowUpInput {
+                due_at: Some("next tuesday".into()),
+                added_at: None,
+            }),
+        )
+        .is_err());
+        assert!(get_session(&c, &s.id)
+            .unwrap()
+            .unwrap()
+            .follow_up
+            .unwrap()
+            .due_at
+            .is_some());
+
+        let done = set_follow_up(&c, &s.id, None).unwrap();
+        assert_eq!(done.follow_up, None);
+
+        // Undoing Done restores the original queue time.
+        let restored = set_follow_up(
+            &c,
+            &s.id,
+            Some(FollowUpInput {
+                due_at: None,
+                added_at: Some("2026-09-01T10:00:00.000Z".into()),
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            restored.follow_up.unwrap().added_at,
+            "2026-09-01T10:00:00.000Z"
+        );
+        assert!(set_follow_up(&c, "missing", None).is_err());
+    }
+
+    #[test]
+    fn scans_and_runtime_never_reset_follow_up() {
+        let c = open_in_memory();
+        let s = discovered(&c, "keep");
+        set_follow_up(
+            &c,
+            &s.id,
+            Some(FollowUpInput {
+                due_at: Some("2026-10-01T09:00:00Z".into()),
+                added_at: None,
+            }),
+        )
+        .unwrap();
+        let before = get_session(&c, &s.id).unwrap().unwrap().follow_up;
+
+        // Rescan with fresher data, lose it at the source, find it again.
+        let d = DiscoveredSession {
+            external_id: "keep".into(),
+            title: "Renamed upstream".into(),
+            last_activity_at: Some(now_iso()),
+            ..Default::default()
+        };
+        upsert_discovered(&c, Provider::Codex, "codex-state-db", &d, None, None).unwrap();
+        flag_missing(&c, Provider::Codex, "codex-state-db", &[]).unwrap();
+        upsert_discovered(&c, Provider::Codex, "codex-state-db", &d, None, None).unwrap();
+        // The monitor writes state, heartbeats and activity.
+        let rt = RuntimeStatus {
+            state: RuntimeState::Working,
+            confidence: Confidence::High,
+            reason: None,
+            detail: None,
+            source: Some("codex-rollout".into()),
+            action_required: false,
+            since: None,
+            last_observed_at: Some(now_iso()),
+        };
+        write_runtime(&c, &s.id, &rt).unwrap();
+        touch_runtime(&c, std::slice::from_ref(&s.id), &now_iso()).unwrap();
+        bump_last_activity(&c, &s.id, &now_iso()).unwrap();
+        // Unrelated user edits don't clear it either.
+        update_session(
+            &c,
+            &s.id,
+            SessionPatch {
+                favorite: Some(true),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let after = get_session(&c, &s.id).unwrap().unwrap();
+        assert_eq!(after.title, "Renamed upstream");
+        assert_eq!(after.follow_up, before);
+        assert!(after.follow_up.is_some());
+    }
+
+    #[test]
+    fn migrates_a_v3_database_keeping_user_flags() {
+        let c = Connection::open_in_memory().unwrap();
+        for (i, sql) in MIGRATIONS[..3].iter().enumerate() {
+            c.execute_batch(&format!(
+                "BEGIN; {sql}; PRAGMA user_version = {}; COMMIT;",
+                i + 1
+            ))
+            .unwrap();
+        }
+        c.execute_batch(
+            "INSERT INTO sessions (id, provider, title, source, favorite, notes, title_locked, created_at, updated_at)
+               VALUES ('a','codex','Mine','codex-state-db',1,'keep me',1,'t','t');",
+        )
+        .unwrap();
+        migrate(&c).unwrap();
+        let s = get_session(&c, "a").unwrap().unwrap();
+        assert_eq!(
+            (s.favorite, s.notes.as_deref(), s.title_locked),
+            (true, Some("keep me"), true)
+        );
+        assert_eq!(s.follow_up, None, "nothing is queued by the migration");
     }
 
     #[test]

@@ -42,6 +42,12 @@ export interface SessionPatch {
   favorite?: boolean;
 }
 
+/** Queue (or reschedule) a follow-up. `addedAt` is only used to restore one after Undo. */
+export interface FollowUpInput {
+  dueAt?: string | null;
+  addedAt?: string | null;
+}
+
 export interface ProjectPatch {
   name?: string;
   rootPath?: string | null;
@@ -84,6 +90,8 @@ export const api = {
     notes?: string | null;
   }) => call<Session>("add_manual_session", { input }),
   updateSession: (id: string, patch: SessionPatch) => call<Session>("update_session", { id, patch }),
+  /** `null` clears it: Done. */
+  setFollowUp: (id: string, followUp: FollowUpInput | null) => call<Session>("set_follow_up", { id, followUp }),
   deleteSession: (id: string) => call<void>("delete_session", { id }),
   setLink: (from: string, to: string, linked: boolean) => call<void>("set_link", { from, to, linked }),
 

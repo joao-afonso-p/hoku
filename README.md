@@ -88,25 +88,28 @@ download.
 | **Galaxy** | Every project is a star system. Sessions orbit it: angle = provider, distance = relevance (needs you → working → ready → recent → older). A warm halo means it needs you, a breathing one that it's working. |
 | **Runtime state** | Every session is *working*, *needs input*, *ready*, *idle*, *offline*, *error* or *unknown*, with a confidence level. See [docs/runtime-state.md](docs/runtime-state.md). |
 | **Needs You** (badge) | The inbox for sessions waiting on you: permissions, questions, confirmations, auth failures. Oldest wait first. Finished sessions are *Ready* and never land here. |
+| **Follow up** (⚑, `F`) | Your own review-later queue, separate from Needs You. Put a finished session there from its inspector, an Activity row, the Sessions table or ⌘K (`⌘F`), or select it and press `F`. Optionally set a reminder (in 3 hours, tomorrow at 9, next Monday, or a date) or snooze it. The queue groups by date (Due · No date · Scheduled) or by project; overdue reminders show in coral and the rail badge counts what's due. `F` or **Done** clears it, with Undo. Nothing lands here on its own, and scans never reset it. Reminders are in-app only for now: no macOS notifications. |
 | **Status filters** | Galaxy quick filters `Needs You` / `Working` plus a multi-select `Status ▾`. Non-matching sessions fade in place, so nothing moves. |
-| **Current \| All** (⌘⇧A) | **Current** (default) shows what you're working on: live sessions, favorites, and anything active in the last 7 days (3/7/14/30 in Settings). **All** shows the full archive. Each project shows "N current · M total". |
+| **Current \| All** (⌘⇧A) | **Current** (default) shows what you're working on: live sessions, favorites, sessions in Follow up, and anything active in the last 7 days (3/7/14/30 in Settings). **All** shows the full archive. Each project shows "N current · M total". |
 | **+N older** | In a project, temporarily reveal its older sessions without switching to All. |
 | **Project Focus** | Click a project to zoom in. Hover for metadata, click to inspect, double-click to open. |
 | **Inactive projects** | Stay on the map, very faint, so their place stays familiar. *Settings → Hide inactive projects* removes them without moving the others. |
 | **Archive a project** | From its edit sheet or the Projects drawer. It leaves the Galaxy, keeps its sessions, root and position, and stays searchable. Restore it from Projects → Archived. *Delete* instead removes the project and moves its sessions to Unsorted. |
 | **Go to terminal** | The one action for Claude Code. At click time Hoku checks live state and switches to the tab it's running in (or to VS Code, when it runs in VS Code's terminal), attaches to a background session, or resumes it in a new tab of your frontmost iTerm window. It never starts a second copy of a live session. |
 | **Galaxy ambience** | *Settings → Galaxy ambience*: `Subtle motion` (default: the background drifts imperceptibly and follows the cursor a little) or `Still`. Runtime animations are separate and always shown, unless macOS reduced motion is on. |
-| **⌘K** | Search **all** sessions (including ones hidden from Current or by a filter), projects and actions. `↵` opens, `⌘↵` shows on map, `⌥↵` filters the Galaxy to its state, `⌘P` goes to its project, `⌘D` favorites, `⌘C` copies the ID. |
+| **⌘K** | Search **all** sessions (including ones hidden from Current or by a filter), projects and actions. `↵` opens, `⌘↵` shows on map, `⌥↵` filters the Galaxy to its state, `⌘P` goes to its project, `⌘D` favorites, `⌘F` follows up, `⌘C` copies the ID. |
 | **Resume** (`R` in a project) | A return-to-work view for the focused project: your description and next step (both editable), **Continue here** (the session to open first, with why), what **needs a decision**, recent sessions with state, branch, PR and notes, and **what changed** in the last 7 days. *Ready* means an agent finished its turn, not that the task is done; inferred states are marked. Also from the project header, the Projects drawer and ⌘K. |
 | **AI drafts** (optional) | *Settings → AI drafts* lets Claude draft a project's description and next step through the installed Claude Code CLI. Off by default and never automatic. Before each draft you see the exact text that will be sent: project name, your description, next step and session notes, session titles and states, branch names, PR numbers and recent events. No transcripts, prompts, tool output, file contents, paths, links, emails, accounts or session IDs, and paths, links, emails and token-like strings are replaced before sending. The CLI runs once with every tool disabled, your customizations off (`--safe-mode`) and no saved session (`--no-session-persistence`). Hoku never reads credentials. The draft is saved only when you accept it. |
 | **Activity** | Cross-provider timeline of what started, finished, needed you or failed (Today / 7d / 30d). |
-| **Sessions** | The management table: search, sort, filter by project, provider, status, account, favorite, recency. |
+| **Sessions** | The management table: search, sort, filter by project, provider, status, account, favorite, follow up, recency. |
 | **Recaps** | A shareable recap of a period (today, 7, 30 or 90 days) and some or all projects. Shows observed activity (active projects, sessions, days, provider mix, linked PRs) with its coverage, next to outcomes *you* write (each one goes on the card only when you tick it). Export a share card as a PNG or copy it, plus LinkedIn or Slack/Teams text. Public-safe by default: no account names, titles, IDs, paths, prompts, notes, PR links or unnamed projects. See [docs/recaps.md](docs/recaps.md). |
 | **Favorites / Projects** | Left rail drawers. Projects show compact runtime summaries ("1 needs you · 2 working"). |
 | **Scan** (⌘⇧S) | Discovers Claude Code, Codex and Cowork sessions and suggests projects from their folders. |
 | **Add session** (⌘N) | Paste a Claude link, a Codex thread ID or a Claude Code session ID. |
 | Drag a session onto a project in the galaxy | Reassign it. |
-| `Tab` / `⇧Tab`, `↵`, `Esc`, `⌘1–9`, `⌘0` | Cycle sessions, open, back out, jump to project, galaxy. |
+| `Tab` / `⇧Tab`, `↵`, `F`, `Esc`, `⌘1–9`, `⌘0` | Cycle sessions, open, follow up (or mark done), back out, jump to project, galaxy. |
+
+![Follow up queue and inspector, with demo data](docs/images/follow-up.png)
 
 ## Providers
 
@@ -133,6 +136,9 @@ Account state comes from `claude auth status` (email, org, plan) and `codex logi
   switched to at all; Hoku says where the session runs instead of starting a second copy.
 - A Codex account's email isn't readable without opening its credential file, which the app
   doesn't do. The Codex account shows as "Connected externally".
+- Follow up reminders are shown inside Hoku only (rail badge, queue, inspector). There are no
+  macOS notifications yet. Removing a session from the index also removes its follow-up; a
+  scanned session that comes back on the next scan returns without one.
 - One root folder per project. Sessions elsewhere can be dragged in or reassigned by hand,
   and that choice sticks.
 - The Cowork deep link is verified in Claude Desktop's code and accepted without warnings,

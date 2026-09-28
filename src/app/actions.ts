@@ -2,7 +2,7 @@ import { listen } from "@tauri-apps/api/event";
 import { isSessionVisible, visibilityFromSettings, VISIBILITY_KEYS, type GalaxyVisibility } from "../features/galaxy/visibility";
 import type { StatusKey } from "../features/runtime/status";
 import type { SessionFilter } from "../features/sessions/filter";
-import { api, type ProjectPatch, type ProjectResumePatch, type SessionPatch } from "../lib/api";
+import { api, type FollowUpInput, type ProjectPatch, type ProjectResumePatch, type SessionPatch } from "../lib/api";
 import type { HubError, Session } from "../lib/types";
 import { getState, setState, type ListMode, type Overlay, type Toast } from "./store";
 
@@ -204,6 +204,46 @@ export async function patchSession(id: string, patch: SessionPatch, quiet = fals
 
 export async function toggleFavorite(s: Session) {
   await patchSession(s.id, { favorite: !s.favorite }, true);
+}
+
+// ───────────── follow up ─────────────
+
+async function writeFollowUp(id: string, followUp: FollowUpInput | null) {
+  await api.setFollowUp(id, followUp);
+  await reload();
+}
+
+/** Put a session in Follow up, or change when to be reminded (null = no date). */
+export async function followUp(s: Session, dueAt: string | null = null) {
+  try {
+    const before = s.followUp ?? null;
+    await writeFollowUp(s.id, { dueAt });
+    if (!before) {
+      toast({ tone: "success", message: "Added to Follow up", action: { label: "Undo", run: () => void writeFollowUp(s.id, null).catch(fail) } });
+    } else if (dueAt) {
+      toast({ tone: "success", message: `Reminder set for ${new Date(dueAt).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}` });
+    }
+  } catch (e) {
+    fail(e);
+  }
+}
+
+/** Done: out of the queue. Undo puts it back exactly as it was. */
+export async function followUpDone(s: Session) {
+  const before = s.followUp;
+  if (!before) return;
+  try {
+    await writeFollowUp(s.id, null);
+    toast({ tone: "info", message: "Done. Removed from Follow up", action: { label: "Undo", run: () => void writeFollowUp(s.id, { dueAt: before.dueAt ?? null, addedAt: before.addedAt }).catch(fail) } });
+  } catch (e) {
+    fail(e);
+  }
+}
+
+/** The F key: add the selected session, or mark it done. */
+export async function toggleFollowUp(s: Session) {
+  if (s.followUp) await followUpDone(s);
+  else await followUp(s);
 }
 
 export async function removeSession(s: Session) {

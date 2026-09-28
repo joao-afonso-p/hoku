@@ -21,7 +21,7 @@ import { ResumeDrawer } from "../features/resume/ResumeDrawer";
 import { SpacesHelpSheet } from "../features/sessions/SpacesHelpSheet";
 import { ageMs } from "../lib/time";
 import { isSessionVisible, visibilityFromSettings } from "../features/galaxy/visibility";
-import { setVisibility, showGalaxy, closeOverlay, copy, escape, focusProject, openOverlay, openSession, patchSession, reload, scan, select, startRuntimeUpdates, toast, toggleResume } from "./actions";
+import { setVisibility, showGalaxy, closeOverlay, copy, escape, focusProject, openOverlay, openSession, patchSession, reload, scan, select, startRuntimeUpdates, toast, toggleFollowUp, toggleResume } from "./actions";
 import { UNSORTED, useSession, useSystems, useVisibility } from "./model";
 import { getState, useHub } from "./store";
 
@@ -170,6 +170,13 @@ function useGlobalKeys(systemKeys: string[]) {
       } else if (e.key === "Enter" && s.selectedId) {
         const session = s.data.sessions.find((x) => x.id === s.selectedId);
         if (session) void openSession(session);
+      } else if (!mod && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "f" && s.selectedId) {
+        // Follow up: add the selected session, or mark it done.
+        const session = s.data.sessions.find((x) => x.id === s.selectedId);
+        if (session) {
+          e.preventDefault();
+          void toggleFollowUp(session);
+        }
       } else if (e.key === "Tab" && s.focus) {
         e.preventDefault();
         cycle(e.shiftKey ? -1 : 1);

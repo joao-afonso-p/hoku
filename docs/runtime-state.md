@@ -41,6 +41,11 @@ and `low` mean it was inferred, and the UI says "inferred" or "Likely:" next to 
 You inbox and the Galaxy filter all use that one rule (`needsYou()` in `status.ts`). Ready,
 idle and offline never count.
 
+**Follow up** is not a runtime state. It's the user's own "review later" flag
+(`sessions.follow_up_at`, optional `follow_up_due_at`), set only from the UI. The monitor and
+scans never write it, and no state puts a session there automatically: a Ready session stays
+Ready until the user chooses to follow up on it. See `features/follow-up/followUp.ts`.
+
 For counts and filters, each session maps to exactly one **status key**: `needs_you`, `error`
 (errors that don't need you), `working`, `ready`, `idle`, `offline`, `unknown`. Counts
 therefore always add up.
@@ -177,9 +182,10 @@ Transcripts are never stored.
 
 ## Where it shows up
 
-- **Sidebar**: Galaxy · **Needs You (badge)** · Activity · Favorites · Projects · Sessions ·
-  Recaps.
-  Working, Ready, Idle and Offline are filters, not destinations.
+- **Sidebar**: Galaxy · **Needs You (badge)** · **Follow up (due badge)** · Activity ·
+  Favorites · Projects · Sessions · Recaps. Working, Ready, Idle and Offline are filters, not
+  destinations. Needs You's badge is amber; Follow up's is a quiet starlight count of
+  reminders that have gone off, so the two never read as the same thing.
 - **Galaxy**: `Current · 7d | All`, quick filters `Needs You n` and `Working n` (which double
   as the "what's happening now" summary), and a multi-select `Status ▾`. Filtering never
   moves anything: non-matching sessions fade to ~14% and projects with no match to ~16%.
@@ -189,11 +195,15 @@ Transcripts are never stored.
   breathing halo, ready a thin ring. Idle, offline and unknown get quieter in that order.
 - **Needs You**: the inbox, as a list. Blocking errors first, then the longest wait first,
   with the reason and detail.
+- **Follow up**: the user's review-later queue, by date (Due · No date · Scheduled) or by
+  project, with a project filter. Each row shows the reminder, the live state and whether
+  the session was opened since it was queued.
 - **Activity**: the cross-provider timeline (Today · 7d · 30d, provider filter). The top bar
-  shows "N finished" since you last opened it. Ready is news, not an inbox item.
+  shows "N finished" since you last opened it. Ready is news, not an inbox item; hover a row
+  to put that session in Follow up.
 - **Sessions**: the management table with search, sort and filters (project, provider,
   status, account, favorites, last activity), built on `features/sessions/filter.ts`, the
   one shared filter.
 - **⌘K**: always searches every session. Results show the state. `⌥↵` filters the Galaxy to
-  that state, `⌘P` goes to the project, `⌘D` favorites.
+  that state, `⌘P` goes to the project, `⌘D` favorites, `⌘F` follows up.
 - **Integration Center**: live-state support per source: ✓ full, ◐ inferred, — none.

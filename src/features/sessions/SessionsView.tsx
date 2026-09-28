@@ -1,8 +1,8 @@
 import { useMemo } from "react";
-import { openSession, patchSessionsFilter, revealSession, select } from "../../app/actions";
+import { openSession, patchSessionsFilter, revealSession, select, toggleFollowUp } from "../../app/actions";
 import { UNSORTED } from "../../app/model";
 import { setState, useHub, type SessionsSort } from "../../app/store";
-import { IconGalaxy, IconSearch, IconStar, IconStarFilled } from "../../components/Icons";
+import { IconFlag, IconFlagFilled, IconGalaxy, IconSearch, IconStar, IconStarFilled } from "../../components/Icons";
 import { MultiSelect } from "../../components/MultiSelect";
 import { ageMs, relativeTime } from "../../lib/time";
 import type { Provider, Session } from "../../lib/types";
@@ -111,6 +111,13 @@ export function SessionsView({ insetRight }: { insetRight: number }) {
         >
           {filter.favoritesOnly ? <IconStarFilled size={12} className="text-star" /> : <IconStar size={12} />} Favorites
         </button>
+        <button
+          className={`flex h-[26px] items-center gap-1 rounded-[7px] border px-2 text-[11.5px] ${filter.followUpOnly ? "border-line-strong bg-white/[0.06] text-ink" : "border-line text-ink-3 hover:text-ink-2"}`}
+          onClick={() => patchSessionsFilter({ followUpOnly: !filter.followUpOnly })}
+          aria-pressed={!!filter.followUpOnly}
+        >
+          {filter.followUpOnly ? <IconFlagFilled size={12} /> : <IconFlag size={12} />} Follow up
+        </button>
         <select
           className="h-[26px] rounded-[7px] border border-line bg-transparent px-1.5 text-[11.5px] text-ink-3 outline-none"
           value={String(filter.recentWindowDays ?? "")}
@@ -171,10 +178,26 @@ function Row({ s, project, color, archived, selected }: { s: Session; project: s
       <span className="flex min-w-0 items-center gap-2">
         <span className={`min-w-[3.5rem] truncate ${faded ? "text-ink-2" : "text-ink"}`}>{s.title}</span>
         {s.favorite && <span className="text-[10.5px] text-star-dim">★</span>}
+        {s.followUp && (
+          <span className="shrink-0 text-ink-3" title="In Follow up">
+            <IconFlagFilled size={11} />
+          </span>
+        )}
         {/* The branch gives way before the title does. */}
         {s.branch && <span className="min-w-0 shrink-[4] truncate font-mono text-[10.5px] text-ink-4">{s.branch}</span>}
         <button
-          className="ml-auto flex shrink-0 items-center gap-1 text-[11px] text-ink-4 opacity-0 group-hover:opacity-100 hover:text-ink-2"
+          className="ml-auto flex shrink-0 items-center gap-1 text-[11px] text-ink-4 opacity-0 group-hover:opacity-100 hover:text-ink-2 focus-visible:opacity-100"
+          onClick={(e) => {
+            e.stopPropagation();
+            void toggleFollowUp(s);
+          }}
+          onDoubleClick={(e) => e.stopPropagation()}
+          title={s.followUp ? "Done: remove from Follow up (F)" : "Review this session later (F)"}
+        >
+          {s.followUp ? <IconFlagFilled size={12} /> : <IconFlag size={12} />} {s.followUp ? "Done" : "Follow up"}
+        </button>
+        <button
+          className="flex shrink-0 items-center gap-1 text-[11px] text-ink-4 opacity-0 group-hover:opacity-100 hover:text-ink-2"
           onClick={(e) => {
             e.stopPropagation();
             revealSession(s);
