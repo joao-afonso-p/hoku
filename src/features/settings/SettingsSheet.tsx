@@ -12,6 +12,8 @@ import { tildify } from "../../lib/paths";
 import type { DraftProviderStatus, NotificationStatus } from "../../lib/types";
 import { AI_DRAFTS_KEY } from "../resume/ResumeDrawer";
 import { HOW_IT_RUNS, NEVER_SENT, SENT_CATEGORIES } from "../resume/privacy";
+// The release workflow keeps package.json, tauri.conf.json and Cargo.toml on one version.
+import { version } from "../../../package.json";
 
 const TERMINALS = [
   { id: "auto", label: "Automatic", hint: "iTerm if installed" },
@@ -182,7 +184,7 @@ export function SettingsSheet() {
           <img src={mark} alt="" className="h-9 w-9" draggable={false} />
           <div>
             <div className="text-[13px] font-semibold text-ink">Hoku</div>
-            <div className="text-[11.5px] text-ink-3">Your AI work, mapped. · v0.1.0</div>
+            <div className="text-[11.5px] text-ink-3">Your AI work, mapped. · v{version}</div>
           </div>
         </section>
       </div>
