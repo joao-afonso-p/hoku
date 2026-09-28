@@ -12,8 +12,11 @@ export type Overlay =
   | { kind: "scan" }
   | { kind: "spaces-help"; app: string };
 
-/** Drawers over the Galaxy. Needs You is the human-action inbox; Activity the timeline. */
-export type ListMode = "needs" | "activity" | "favorites" | "projects";
+/**
+ * Drawers over the Galaxy. Needs You is the human-action inbox; Activity the timeline.
+ * Resume is project-scoped: it describes the focused project.
+ */
+export type ListMode = "needs" | "activity" | "favorites" | "projects" | "resume";
 /** Full-area destinations. The Galaxy is home; Sessions is the management list. */
 export type View = "galaxy" | "sessions";
 export type ActivityRange = "today" | "7d" | "30d";

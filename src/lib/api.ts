@@ -1,14 +1,17 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  DraftProviderStatus,
   HubError,
   HubSnapshot,
   OpenResult,
   ParsedReference,
+  PreparedDraft,
   Project,
   ProjectSuggestion,
   Provider,
   ProviderAccount,
   ProviderGroup,
+  ResumeDraft,
   ScanReport,
   Session,
 } from "./types";
@@ -42,6 +45,11 @@ export interface ProjectPatch {
   icon?: string | null;
 }
 
+export interface ProjectResumePatch {
+  description?: string | null;
+  nextStep?: string | null;
+}
+
 export const api = {
   snapshot: () => call<HubSnapshot>("get_snapshot"),
 
@@ -50,6 +58,13 @@ export const api = {
   updateProject: (id: string, patch: ProjectPatch) => call<Project>("update_project", { id, patch }),
   deleteProject: (id: string) => call<void>("delete_project", { id }),
   archiveProject: (id: string, archived: boolean) => call<Project>("archive_project", { id, archived }),
+  updateProjectResume: (id: string, patch: ProjectResumePatch) => call<Project>("update_project_resume", { id, patch }),
+
+  aiDraftStatus: () => call<DraftProviderStatus>("ai_draft_status"),
+  /** Builds the payload for inspection. Sends nothing. */
+  prepareResumeDraft: (projectId: string) => call<PreparedDraft>("prepare_resume_draft", { projectId }),
+  /** Sends exactly the prepared payload to the Claude Code CLI. Only on an explicit click. */
+  generateResumeDraft: (token: string) => call<ResumeDraft>("generate_resume_draft", { token }),
   projectSuggestions: () => call<ProjectSuggestion[]>("project_suggestions"),
   createProjectsFromSuggestions: (suggestions: { name: string; rootPath: string; color?: string | null }[]) =>
     call<number>("create_projects_from_suggestions", { suggestions }),

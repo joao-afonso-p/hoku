@@ -148,6 +148,15 @@ pub fn load(conn: &Connection) -> HubResult<()> {
                 is_demo: true,
             },
         )?;
+        // One demo project shows a filled-in Resume; the others show its empty states.
+        if system == 0 {
+            db::update_project_resume(
+                conn,
+                &project.id,
+                Some(Some("Demo · A web app for tracking team goals. Current focus: auth refactor and the evaluation pipeline.".into())),
+                Some(Some("Approve the pending Bash permission, then review the auth refactor branch.".into())),
+            )?;
+        }
         for i in 0..*count {
             let provider = match (rng.next() * 3.0) as u32 {
                 0 => Provider::ClaudeCode,
@@ -203,6 +212,32 @@ pub fn load(conn: &Connection) -> HubResult<()> {
                     favorite: rng.next() > 0.9,
                 },
             )?;
+            // A few sessions carry a branch, a PR and a note, like real ones do.
+            if system == 0 && i < 5 {
+                let branch = [
+                    "feat/auth-refactor",
+                    "fix/eval-flakes",
+                    "feat/eval-pipeline",
+                    "main",
+                    "chore/tokens",
+                ][i];
+                let note = match i {
+                    0 => Some("Demo note · Needs a decision on running the migration script."),
+                    2 => Some("Demo note · Check the eval numbers before merging."),
+                    _ => None,
+                };
+                conn.execute(
+                    "UPDATE sessions SET branch = ?2, notes = COALESCE(?3, notes),
+                        metadata = CASE WHEN ?4 IS NULL THEN metadata ELSE json_set(metadata, '$.prUrl', ?4) END
+                     WHERE id = ?1",
+                    rusqlite::params![
+                        session.id,
+                        branch,
+                        note,
+                        (i == 2).then_some("https://github.com/example/demo/pull/128")
+                    ],
+                )?;
+            }
             // A short history, so the Activity timeline has something to show.
             let id = &session.id;
             match state {

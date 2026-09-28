@@ -204,6 +204,9 @@ mod tests {
             slot: 1,
             is_demo: false,
             archived_at: None,
+            description: None,
+            next_step: None,
+            resume_updated_at: None,
             created_at: String::new(),
             updated_at: String::new(),
         }

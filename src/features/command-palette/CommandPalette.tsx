@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { closeOverlay, copy, focusProject, openOverlay, openSession, quickFilter, revealSession, scan, setStatusFilter, showSessions, toggleFavorite, toggleList } from "../../app/actions";
+import { closeOverlay, copy, focusProject, openOverlay, openResume, openSession, quickFilter, revealSession, scan, setStatusFilter, showSessions, toggleFavorite, toggleList } from "../../app/actions";
 import { UNSORTED } from "../../app/model";
-import { useHub } from "../../app/store";
+import { getState, useHub } from "../../app/store";
 import { basename } from "../../lib/paths";
 import { relativeTime } from "../../lib/time";
 import type { Project, Session } from "../../lib/types";
@@ -29,6 +29,17 @@ const ACTIONS: Omit<Extract<Item, { kind: "action" }>, "kind">[] = [
   { id: "a:filter-working", label: "Filter Galaxy: Working", keywords: "filter galaxy working active running live status", run: () => quickFilter("working") },
   { id: "a:filter-clear", label: "Clear status filter", keywords: "clear filter status reset all", run: () => setStatusFilter([]) },
   { id: "a:favorites", label: "Show favorites", keywords: "favorites starred pinned", run: () => toggleList("favorites") },
+  {
+    id: "a:resume",
+    label: "Resume this project",
+    hint: "What it is, what changed, what needs you, where to continue",
+    keywords: "resume project summary description next step continue recap",
+    run: () => {
+      const f = getState().focus;
+      if (f && f !== UNSORTED) openResume(f);
+      else toggleList("projects");
+    },
+  },
   { id: "a:galaxy", label: "Back to galaxy", keywords: "galaxy home all overview", run: () => focusProject(null) },
   { id: "a:settings", label: "Settings", keywords: "settings preferences terminal iterm", run: () => openOverlay({ kind: "settings" }) },
 ];

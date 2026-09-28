@@ -8,13 +8,16 @@ import { ageMs, DURATION, relativeTime } from "../../lib/time";
 import type { ActivityEvent, Project, Provider, Session } from "../../lib/types";
 import { PROVIDER_LIST, PROVIDERS, surfaceLabel } from "../../providers";
 import { GlyphIcon } from "../constellation/Glyph";
-import { IconArchive, IconArrowUpRight, IconClose, IconEdit, IconPlus } from "../../components/Icons";
+import { IconArchive, IconArrowUpRight, IconClose, IconEdit, IconPlus, IconResume } from "../../components/Icons";
+import { RESUME_WIDTH } from "../resume/ResumeDrawer";
+import { toggleResume } from "../../app/actions";
 import { ATTENTION, EVENT_TONE, EVENT_VERB, isInferred, reasonText, runtimeSummary, sortNeedsYou, STATUS, stateSince, statusKey } from "../runtime/status";
 import { RuntimeSummaryText, StatusDot, StatusLabel } from "../runtime/StatusMark";
 
 export const DRAWER_WIDTH = 300;
 const WIDE = 344;
 export function drawerWidth(mode: ListMode): number {
+  if (mode === "resume") return RESUME_WIDTH;
   return mode === "needs" || mode === "activity" ? WIDE : DRAWER_WIDTH;
 }
 
@@ -23,6 +26,7 @@ const TITLES: Record<ListMode, string> = {
   activity: "Activity",
   favorites: "Favorites",
   projects: "Projects",
+  resume: "Resume",
 };
 
 const RANGE_MS: Record<ActivityRange, number> = { today: 0, "7d": 7 * DURATION.DAY, "30d": 30 * DURATION.DAY };
@@ -53,6 +57,7 @@ export function listHighlight(mode: ListMode, sessions: Session[], events: Activ
     case "favorites":
       return new Set(sessions.filter((s) => s.favorite).map((s) => s.id));
     case "projects":
+    case "resume":
       return null;
   }
 }
@@ -378,7 +383,10 @@ function ProjectList({ systems }: { systems: SystemModel[] }) {
               )}
             </button>
             {sys.project && (
-              <span className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100">
+              <span className="flex items-center gap-1.5 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
+                <button className="text-ink-4 hover:text-ink-2" onClick={() => toggleResume(sys.project!.id)} title="Resume: what this project is, what changed, where to continue" aria-label="Resume project">
+                  <IconResume size={13} />
+                </button>
                 <button className="text-ink-4 hover:text-ink-2" onClick={() => void archiveProject(sys.project!.id, true)} title="Archive: hide from the Galaxy, keep everything" aria-label="Archive project">
                   <IconArchive size={13} />
                 </button>

@@ -176,6 +176,12 @@ pub struct Project {
     pub is_demo: bool,
     /// Archived projects leave the Galaxy but keep sessions, root and slot. Restorable.
     pub archived_at: Option<String>,
+    /// Project Resume: what this project is, in the user's words (or an accepted AI draft).
+    pub description: Option<String>,
+    /// Project Resume: where to pick up next, in the user's words.
+    pub next_step: Option<String>,
+    /// When the description or next step last changed.
+    pub resume_updated_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
