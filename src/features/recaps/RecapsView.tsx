@@ -15,6 +15,7 @@ import { dayKey, periodLabel, RANGES, recapQuery, shortDay, type RecapRange } fr
 import {
   buildCard,
   chatText,
+  EMPTY_DRAFT,
   FORMATS,
   linkedInText,
   MAX_CARD_OUTCOMES,
@@ -76,12 +77,12 @@ export function RecapsView() {
   const projects = useHub((s) => s.data.projects);
   const { recap, error, refresh } = useRecap(range, filter);
   const [prefs, updatePrefs] = usePrefs();
-  const [draft, setDraft] = useState<ShareDraft>({ headline: "", outcomeIds: null });
+  const [draft, setDraft] = useState<ShareDraft>(EMPTY_DRAFT);
   const [outcomeText, setOutcomeText] = useState("");
   const outcomeInput = useRef<HTMLInputElement>(null);
 
-  // A different period or project set is a different recap: start from the defaults again.
-  useEffect(() => setDraft((d) => ({ ...d, outcomeIds: null })), [range, filter]);
+  // A different period or project set is a different recap: nothing of yours is on it until you tick it.
+  useEffect(() => setDraft((d) => ({ ...d, outcomeIds: [] })), [range, filter]);
 
   const card = useMemo(() => (recap ? buildCard(recap, range, prefs, draft) : null), [recap, range, prefs, draft]);
   const toggleProject = (k: string) => setState({ recapProjects: filter.includes(k) ? filter.filter((x) => x !== k) : [...filter, k] });
@@ -312,9 +313,9 @@ function OutcomesSection({
     if (!text.trim() || busy) return;
     setBusy(true);
     try {
-      const o = await api.createOutcome({ text, occurredOn: day, projectId: project || null });
+      // Writing an outcome doesn't put it on the card; ticking it does.
+      await api.createOutcome({ text, occurredOn: day, projectId: project || null });
       setText("");
-      setDraft((d) => (d.outcomeIds && d.outcomeIds.length < max ? { ...d, outcomeIds: [...d.outcomeIds, o.id] } : d));
       onChange();
     } catch (e) {
       fail(e);
@@ -344,10 +345,17 @@ function OutcomesSection({
     <Section
       title="Outcomes"
       tag={<Tag tone="yours">Written by you</Tag>}
+      right={
+        recap.outcomes.length > 0 && (
+          <span className="text-[11px] text-ink-4 tabular-nums">
+            {onCard.size} of {max} on the card
+          </span>
+        )
+      }
       hint={
         <>
-          What actually moved forward: shipped, decided, unblocked, learned. Hoku never marks work as done. A session being Ready only means a turn finished. The card shows up to {max} outcomes in this
-          format.
+          What actually moved forward: shipped, decided, unblocked, learned. Hoku never marks work as done. A session being Ready only means a turn finished. Outcomes stay off the card and the
+          post text until you tick them, up to {max} in this format.
         </>
       }
     >
@@ -387,7 +395,7 @@ function OutcomesSection({
       </form>
 
       {recap.outcomes.length === 0 ? (
-        <p className="mt-3 text-[12px] text-ink-4">No outcomes in this period yet. Without them the card shows activity only.</p>
+        <p className="mt-3 text-[12px] text-ink-4">No outcomes in this period yet. Without ticked outcomes the card shows activity only.</p>
       ) : (
         <ul className="mt-3 divide-y divide-white/[0.04] rounded-[10px] border border-line">
           {recap.outcomes.map((o) =>

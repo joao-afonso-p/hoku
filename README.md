@@ -94,7 +94,7 @@ download.
 | **⌘K** | Search **all** sessions (including ones hidden from Current or by a filter), projects and actions. `↵` opens, `⌘↵` shows on map, `⌥↵` filters the Galaxy to its state, `⌘P` goes to its project, `⌘D` favorites, `⌘C` copies the ID. |
 | **Activity** | Cross-provider timeline of what started, finished, needed you or failed (Today / 7d / 30d). |
 | **Sessions** | The management table: search, sort, filter by project, provider, status, account, favorite, recency. |
-| **Recaps** | A shareable recap of a period (today, 7, 30 or 90 days) and some or all projects. Shows observed activity (active projects, sessions, days, provider mix, linked PRs) with its coverage, next to outcomes *you* write. Export a share card as a PNG or copy it, plus LinkedIn or Slack/Teams text. Public-safe by default: no account names, titles, IDs, paths, prompts, notes, PR links or unnamed projects. See [docs/recaps.md](docs/recaps.md). |
+| **Recaps** | A shareable recap of a period (today, 7, 30 or 90 days) and some or all projects. Shows observed activity (active projects, sessions, days, provider mix, linked PRs) with its coverage, next to outcomes *you* write (each one goes on the card only when you tick it). Export a share card as a PNG or copy it, plus LinkedIn or Slack/Teams text. Public-safe by default: no account names, titles, IDs, paths, prompts, notes, PR links or unnamed projects. See [docs/recaps.md](docs/recaps.md). |
 | **Favorites / Projects** | Left rail drawers. Projects show compact runtime summaries ("1 needs you · 2 working"). |
 | **Scan** (⌘⇧S) | Discovers Claude Code, Codex and Cowork sessions and suggests projects from their folders. |
 | **Add session** (⌘N) | Paste a Claude link, a Codex thread ID or a Claude Code session ID. |

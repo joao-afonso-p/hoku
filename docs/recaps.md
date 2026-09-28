@@ -7,7 +7,7 @@ something you wrote yourself, and the card says which is which.
 
 Open it from the rail (the card icon under Sessions) or with ⌘K → *Show Recaps*.
 
-![Recaps with demo data](images/recaps.png)
+![Recaps with demo data: outcomes start unticked](images/recaps.png)
 
 ![A landscape share card, demo data](images/recap-card.png)
 
@@ -53,9 +53,11 @@ and type in SQL, so a busy period is counted completely.
 
 Outcomes live in Hoku's own database (`recap_outcomes`, migration v4): up to 140
 characters, a local date and an optional project. They're listed in every recap whose
-period and projects include them. You pick which ones go on the card: by default the newest
-3 (landscape), 4 (square) or 5 (portrait). Deleting a project keeps its outcomes, which
-become project-less. *Remove demo data* deletes outcomes tied to demo projects.
+period and projects include them. **None of them is on the card or in the post text until
+you tick it.** Hoku never ticks one for you: not a new one, not the most recent ones. The
+selection starts empty for every recap, and changing the period or projects clears it. A
+card holds up to 3 ticked outcomes (landscape), 4 (square) or 5 (portrait). Deleting a
+project keeps its outcomes, which become project-less. *Remove demo data* deletes outcomes tied to demo projects.
 
 The linked-PR list can pre-fill an outcome ("Pull request #42: "), which you then finish
 in your own words. The repository name and link aren't copied.
@@ -85,7 +87,8 @@ Nothing is uploaded or posted automatically. Hoku still makes no network request
 ### Privacy defaults
 
 The card and the text are built only from the recap's aggregates and your own words
-(`buildCard` in `src/features/recaps/share.ts`). These are never included: account names
+(`buildCard` in `src/features/recaps/share.ts`). Your outcomes are included only when you
+tick each one. These are never included: account names
 or emails, session titles or IDs, paths, prompts, runtime details, notes and PR links. A
 project's name appears only after you tick *Name on card*. You can give it a public name
 first. Unsorted is never named. The subtle "Recapped with Hoku" line can be turned off,

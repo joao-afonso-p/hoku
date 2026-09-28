@@ -4,7 +4,7 @@ import { NOW } from "../../test/fixtures";
 import { wrapLines } from "./card";
 import { periodLabel, periodStart, recapQuery } from "./period";
 import { coverageSentences } from "./coverage";
-import { buildCard, chatText, DEFAULT_PREFS, defaultHeadline, HOKU_URL, linkedInText, MAX_CARD_OUTCOMES, pickOutcomes, prefsFromSettings, type ShareDraft } from "./share";
+import { buildCard, chatText, DEFAULT_PREFS, defaultHeadline, EMPTY_DRAFT, HOKU_URL, linkedInText, MAX_CARD_OUTCOMES, pickOutcomes, prefsFromSettings, type ShareDraft } from "./share";
 
 function outcome(id: string, text: string, occurredOn = "2026-09-22"): Outcome {
   return { id, text, occurredOn, projectId: "p1", createdAt: "", updatedAt: "" };
@@ -32,7 +32,9 @@ function recap(p: Partial<Recap> = {}): Recap {
   };
 }
 
-const draft: ShareDraft = { headline: "", outcomeIds: null };
+const draft: ShareDraft = EMPTY_DRAFT;
+/** The user ticked every outcome. */
+const picked: ShareDraft = { headline: "", outcomeIds: ["o1", "o2", "o3", "o4"] };
 
 function everything(r: Recap, prefs = DEFAULT_PREFS, d = draft): string {
   const c = buildCard(r, "7d", prefs, d);
@@ -40,6 +42,23 @@ function everything(r: Recap, prefs = DEFAULT_PREFS, d = draft): string {
 }
 
 describe("share card privacy", () => {
+  it("starts with none of the user's outcomes on the card or in the text", () => {
+    const c = buildCard(recap(), "7d", DEFAULT_PREFS, EMPTY_DRAFT);
+    expect(c.outcomes).toEqual([]);
+    expect(c.headline).toBe("My last 7 days of AI-assisted work");
+    const out = everything(recap(), DEFAULT_PREFS, EMPTY_DRAFT);
+    for (const o of recap().outcomes) expect(out).not.toContain(o.text);
+  });
+
+  it("never picks new or recent outcomes by itself", () => {
+    const fresh = outcome("new", "Written a minute ago", "2026-09-24");
+    const r = recap({ outcomes: [fresh, ...recap().outcomes] });
+    expect(pickOutcomes(r.outcomes, EMPTY_DRAFT, "portrait")).toEqual([]);
+    // Ticking one outcome shows that one only, not the newer one above it.
+    expect(pickOutcomes(r.outcomes, { ...draft, outcomeIds: ["o3"] }, "portrait").map((o) => o.id)).toEqual(["o3"]);
+    expect(everything(r, DEFAULT_PREFS, { ...draft, outcomeIds: ["o3"] })).not.toContain("Written a minute ago");
+  });
+
   it("leaves out project names, PR links, repos and ids by default", () => {
     const out = everything(recap());
     for (const secret of ["Secret Client", "Acquisition", "acme", "secret-portal", "github.com/acme", "4d44b29a", "Unsorted", HOKU_URL]) {
@@ -74,30 +93,31 @@ describe("share card privacy", () => {
 
 describe("share card content", () => {
   it("labels where each kind of content comes from", () => {
-    const c = buildCard(recap(), "7d", DEFAULT_PREFS, draft);
+    const c = buildCard(recap(), "7d", DEFAULT_PREFS, picked);
     expect(c.footnote).toBe("Outcomes written by me · activity from local session metadata");
-    const noOutcomes = buildCard(recap({ outcomes: [] }), "7d", DEFAULT_PREFS, draft);
+    const noOutcomes = buildCard(recap(), "7d", DEFAULT_PREFS, draft);
     expect(noOutcomes.footnote).toBe("Activity from local session metadata");
     expect(linkedInText(c)).toContain("The outcomes are my own notes");
   });
 
-  it("uses the newest outcomes up to the format's limit, or exactly the ones picked", () => {
+  it("shows exactly the ticked outcomes, in recap order, up to the format's limit", () => {
     const r = recap();
-    expect(pickOutcomes(r.outcomes, draft, "landscape").map((o) => o.id)).toEqual(["o1", "o2", "o3"]);
-    expect(pickOutcomes(r.outcomes, draft, "portrait")).toHaveLength(Math.min(4, MAX_CARD_OUTCOMES.portrait));
-    expect(pickOutcomes(r.outcomes, { ...draft, outcomeIds: ["o4"] }, "landscape").map((o) => o.id)).toEqual(["o4"]);
-    expect(pickOutcomes(r.outcomes, { ...draft, outcomeIds: [] }, "landscape")).toEqual([]);
+    expect(pickOutcomes(r.outcomes, { ...draft, outcomeIds: ["o4", "o2"] }, "landscape").map((o) => o.id)).toEqual(["o2", "o4"]);
+    expect(pickOutcomes(r.outcomes, picked, "landscape")).toHaveLength(MAX_CARD_OUTCOMES.landscape);
+    expect(pickOutcomes(r.outcomes, picked, "portrait")).toHaveLength(4);
+    // A ticked outcome that left the recap (deleted, other period) is simply gone.
+    expect(pickOutcomes(r.outcomes, { ...draft, outcomeIds: ["gone"] }, "landscape")).toEqual([]);
   });
 
   it("defaults the headline to the period and whether there are outcomes", () => {
     expect(defaultHeadline("30d", true)).toBe("What moved forward in the last 30 days");
     expect(defaultHeadline("7d", false)).toBe("My last 7 days of AI-assisted work");
     expect(defaultHeadline("today", true)).toBe("What moved forward today");
-    expect(buildCard(recap(), "7d", DEFAULT_PREFS, { headline: "  Launch week  ", outcomeIds: null }).headline).toBe("Launch week");
+    expect(buildCard(recap(), "7d", DEFAULT_PREFS, { headline: "  Launch week  ", outcomeIds: [] }).headline).toBe("Launch week");
   });
 
   it("writes plain post text and a compact chat message", () => {
-    const c = buildCard(recap(), "7d", DEFAULT_PREFS, draft);
+    const c = buildCard(recap(), "7d", DEFAULT_PREFS, picked);
     const post = linkedInText(c);
     expect(post.split("\n")[0]).toBe("What moved forward in the last 7 days");
     expect(post).toContain("→ Shipped the CSV importer");

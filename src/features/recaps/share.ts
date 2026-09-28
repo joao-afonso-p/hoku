@@ -80,9 +80,15 @@ export function prefsFromSettings(settings: Record<string, unknown>): SharePrefs
 /** Per-recap choices: an edited headline and which outcomes to show. */
 export interface ShareDraft {
   headline: string;
-  /** null = the newest outcomes, up to the format's limit. */
-  outcomeIds: string[] | null;
+  /**
+   * Outcomes the user ticked for this recap. Starts empty and is never filled in for them:
+   * an outcome reaches the card or the text only after an explicit tick, never because it's
+   * new or recent.
+   */
+  outcomeIds: string[];
 }
+
+export const EMPTY_DRAFT: ShareDraft = { headline: "", outcomeIds: [] };
 
 export interface CardStat {
   key: StatKey;
@@ -128,11 +134,10 @@ export function defaultHeadline(range: RecapRange, hasOutcomes: boolean): string
   return range === "today" ? "Today's AI-assisted work" : `My ${rangePhrase(range).replace(/^the /, "")} of AI-assisted work`;
 }
 
+/** The ticked outcomes still in this recap, in its order, up to the format's limit. Nothing ticked = none. */
 export function pickOutcomes(outcomes: Outcome[], draft: ShareDraft, format: CardFormat): Outcome[] {
-  const max = MAX_CARD_OUTCOMES[format];
-  if (draft.outcomeIds === null) return outcomes.slice(0, max);
   const chosen = new Set(draft.outcomeIds);
-  return outcomes.filter((o) => chosen.has(o.id)).slice(0, max);
+  return outcomes.filter((o) => chosen.has(o.id)).slice(0, MAX_CARD_OUTCOMES[format]);
 }
 
 /** A public label for a project, or null while the user hasn't chosen to name it. Unsorted never gets one. */
