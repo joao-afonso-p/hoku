@@ -75,6 +75,15 @@ export function showSessions() {
   setState((s) => ({ view: s.view === "sessions" && !s.list ? "galaxy" : "sessions", list: null }));
 }
 
+/** Recaps take the whole area; the inspector would only cover the share preview. */
+export function showRecaps() {
+  setState((s) => ({ view: s.view === "recaps" && !s.list ? "galaxy" : "recaps", list: null, selectedId: null }));
+}
+
+export function openRecaps() {
+  setState({ view: "recaps", list: null, selectedId: null });
+}
+
 // ───────────── runtime filters ─────────────
 
 export function setStatusFilter(keys: StatusKey[]) {

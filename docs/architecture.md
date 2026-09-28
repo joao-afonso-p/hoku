@@ -9,8 +9,9 @@ small typed IPC surface.
 ┌──────────────────────── React (src/) ────────────────────────┐
 │ app/        App shell, store (useSyncExternalStore), actions │
 │ features/   constellation · galaxy · runtime · sessions ·    │
-│             command-palette · projects · activity · resume · │
-│             scan · integrations · settings · onboarding      │
+│             command-palette · projects · activity · recaps · │
+│             resume · scan · integrations · settings ·        │
+│             onboarding                                       │
 │ providers/  UI descriptors only (label, glyph, accent)       │
 │ lib/        api.ts (typed invoke), types, hash, time, paths  │
 └──────────────────────────────┬───────────────────────────────┘
@@ -21,6 +22,7 @@ small typed IPC surface.
 │ scan.rs         run adapters, merge, suggestions             │
 │ runtime.rs      runtime monitor: state, watchdog, events     │
 │ association.rs  cwd/repo → project; git worktree resolution  │
+│ recap.rs        recaps: bounded period query, outcomes, PNG  │
 │ providers/      claude_code · codex · claude_desktop (+text) │
 │ launch.rs       terminals (AppleScript), deep links, pbcopy  │
 │ resume.rs       opt-in AI draft for Project Resume (CLI)     │
@@ -42,6 +44,7 @@ on first launch; the old file is left as a backup. Migrations are an ordered lis
 | `sessions` | the index. `(provider, external_id)` is unique. User-owned flags: `favorite`, `notes`, `project_locked`, `title_locked`. `runtime_*` columns hold the normalized runtime status (monitor-owned) |
 | `activity_events` | semantic runtime transitions for the Activity timeline (90 days) |
 | `session_links` | optional undirected relationships |
+| `recap_outcomes` | one-line milestones the user writes for recaps (text ≤140 chars, local date, optional project). Never inferred |
 | `scan_runs` | per-adapter scan history (for "last scan") |
 | `settings` | key → JSON (terminal preference, first-scan flag) |
 
@@ -122,7 +125,7 @@ docs/constellation-layout.md.
 ## Frontend state
 
 A single small store (`app/store.ts`) holds a snapshot of the DB (including recent activity
-events) plus UI state: view (Galaxy / Sessions), focus, selection, overlay, drawer (Needs
+events) plus UI state: view (Galaxy / Sessions / Recaps), focus, selection, overlay, drawer (Needs
 You / Activity / Favorites / Projects), status filter, Sessions filter and sort, toasts and
 scan report. Mutations call the backend and then
 reload the snapshot. The dataset is hundreds of rows, so this stays simple and consistent.
@@ -140,6 +143,10 @@ reload the snapshot. The dataset is hundreds of rows, so this stays simple and c
 - `launch.rs` validates ids (`^[A-Za-z0-9][A-Za-z0-9_-]{5,79}$`, so an id can't be a flag), requires existing absolute
   directories, shell-quotes paths and escapes AppleScript strings. `open` is restricted to
   `claude://`, `codex://`, `https://claude.ai/` and `https://chatgpt.com/`.
+- Recaps are shared only by the user: the share card is copied to the pasteboard or saved as
+  a new PNG in `~/Downloads` (never overwriting a file), and its text is copied with `pbcopy`.
+  Card content is built from aggregates and the user's own words only. See
+  [recaps.md](recaps.md).
 - Hoku makes no network requests of its own and has no analytics or telemetry. The one
   opt-in exception is described in "Project Resume" below. It runs the providers'
   own CLIs (`claude auth status`, `codex login status`, `--version`), which may contact their

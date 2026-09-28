@@ -8,6 +8,7 @@ mod integrations;
 mod launch;
 mod models;
 mod providers;
+mod recap;
 mod resume;
 mod runtime;
 mod scan;
@@ -69,6 +70,12 @@ pub fn run() {
                 commands::open_spaces_settings,
                 commands::reveal_path,
                 commands::open_provider_app,
+                commands::get_recap,
+                commands::create_outcome,
+                commands::update_outcome,
+                commands::delete_outcome,
+                commands::save_recap_image,
+                commands::copy_recap_image,
                 commands::scan_sessions,
                 commands::refresh_runtime,
                 commands::integration_status,

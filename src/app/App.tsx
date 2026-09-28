@@ -8,6 +8,7 @@ import { Constellation } from "../features/constellation/Constellation";
 import { IntegrationCenter } from "../features/integrations/IntegrationCenter";
 import { EmptyState } from "../features/onboarding/EmptyState";
 import { ProjectSheet } from "../features/projects/ProjectSheet";
+import { RecapsView } from "../features/recaps/RecapsView";
 import { ScanSheet } from "../features/scan/ScanSheet";
 import { GalaxyControls } from "../features/galaxy/GalaxyControls";
 import { ambienceFromSettings } from "../features/constellation/Starfield";
@@ -103,10 +104,11 @@ export function App() {
 
         {loaded && !empty && view === "galaxy" && <GalaxyControls systems={systems} left={drawerInset} mode={visibility.mode} windowDays={visibility.recentWindowDays} />}
         {view === "sessions" && <SessionsView insetRight={selected ? INSPECTOR_WIDTH + 12 : 0} />}
+        {view === "recaps" && <RecapsView />}
         <TopBar systems={systems} />
         {list && list !== "resume" && <ListDrawer mode={list} systems={systems} />}
         {resumeProject && <ResumeDrawer project={resumeProject} />}
-        {selected && <Inspector key={selected.id} session={selected} />}
+        {selected && view !== "recaps" && <Inspector key={selected.id} session={selected} />}
 
         {overlay?.kind === "palette" && <CommandPalette />}
         {overlay?.kind === "add-session" && <AddSessionSheet projectId={overlay.projectId} />}
@@ -163,6 +165,8 @@ function useGlobalKeys(systemKeys: string[]) {
         toggleResume(s.focus);
       } else if (e.key === "Escape") {
         escape();
+      } else if (s.view === "recaps" && (e.key === "Enter" || e.key === "Tab")) {
+        // Recaps is a form: Tab and Enter move through and press its controls.
       } else if (e.key === "Enter" && s.selectedId) {
         const session = s.data.sessions.find((x) => x.id === s.selectedId);
         if (session) void openSession(session);

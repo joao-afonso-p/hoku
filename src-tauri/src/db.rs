@@ -137,6 +137,19 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE projects ADD COLUMN next_step TEXT;
     ALTER TABLE projects ADD COLUMN resume_updated_at TEXT;
     "#,
+    // v5 — recap outcomes: one-line milestones the user writes for a recap. Never inferred.
+    // Deleting a project keeps its outcomes (they become project-less).
+    r#"
+    CREATE TABLE recap_outcomes (
+        id           TEXT PRIMARY KEY,
+        project_id   TEXT REFERENCES projects(id) ON DELETE SET NULL,
+        text         TEXT NOT NULL,
+        occurred_on  TEXT NOT NULL,
+        created_at   TEXT NOT NULL,
+        updated_at   TEXT NOT NULL
+    );
+    CREATE INDEX idx_recap_outcomes_day ON recap_outcomes(occurred_on);
+    "#,
 ];
 
 /// The bundle identifier before Hoku had its own (`com.hoku.app`). The app-data folder is
@@ -1022,6 +1035,10 @@ pub fn snapshot(conn: &Connection) -> rusqlite::Result<HubSnapshot> {
 
 pub fn clear_demo(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute("DELETE FROM sessions WHERE source = 'demo'", [])?;
+    conn.execute(
+        "DELETE FROM recap_outcomes WHERE project_id IN (SELECT id FROM projects WHERE is_demo = 1)",
+        [],
+    )?;
     conn.execute("DELETE FROM projects WHERE is_demo = 1", [])?;
     Ok(())
 }

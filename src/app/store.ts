@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import type { SessionFilter } from "../features/sessions/filter";
+import type { RecapRange } from "../features/recaps/period";
 import type { StatusKey } from "../features/runtime/status";
 import type { HubError, HubSnapshot, Provider, ProviderGroup, ScanReport } from "../lib/types";
 
@@ -17,8 +18,8 @@ export type Overlay =
  * Resume is project-scoped: it describes the focused project.
  */
 export type ListMode = "needs" | "activity" | "favorites" | "projects" | "resume";
-/** Full-area destinations. The Galaxy is home; Sessions is the management list. */
-export type View = "galaxy" | "sessions";
+/** Full-area destinations. The Galaxy is home; Sessions is the management list; Recaps summarises a period. */
+export type View = "galaxy" | "sessions" | "recaps";
 export type ActivityRange = "today" | "7d" | "30d";
 
 export interface SessionsSort {
@@ -54,6 +55,9 @@ export interface HubState {
   sessionsSort: SessionsSort;
   activityRange: ActivityRange;
   activityProvider: Provider | null;
+  recapRange: RecapRange;
+  /** Project ids (or "unsorted") in the recap. Empty = every project. */
+  recapProjects: string[];
   toasts: Toast[];
   scanning: boolean;
   scanReport: ScanReport | null;
@@ -78,6 +82,8 @@ let state: HubState = {
   sessionsSort: { key: "activity", dir: "desc" },
   activityRange: "today",
   activityProvider: null,
+  recapRange: "7d",
+  recapProjects: [],
   toasts: [],
   scanning: false,
   scanReport: null,

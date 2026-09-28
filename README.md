@@ -78,6 +78,8 @@ download.
   session is waiting on), and metadata: working directory, file paths, branch, PR link,
   model and token count. Account labels can include the email `claude auth status` reports.
 - The index lives in `~/Library/Application Support/com.hoku.app/hub.sqlite`, on this Mac only.
+- Sharing a recap is always something you do: Hoku copies the image or text to the clipboard,
+  or saves a PNG to `~/Downloads`, and never posts or uploads anything.
 
 ## Using it
 
@@ -99,6 +101,7 @@ download.
 | **AI drafts** (optional) | *Settings → AI drafts* lets Claude draft a project's description and next step through the installed Claude Code CLI. Off by default and never automatic. Before each draft you see the exact text that will be sent: project name, your description, next step and session notes, session titles and states, branch names, PR numbers and recent events. No transcripts, prompts, tool output, file contents, paths, links, emails, accounts or session IDs, and paths, links, emails and token-like strings are replaced before sending. The CLI runs once with every tool disabled, your customizations off (`--safe-mode`) and no saved session (`--no-session-persistence`). Hoku never reads credentials. The draft is saved only when you accept it. |
 | **Activity** | Cross-provider timeline of what started, finished, needed you or failed (Today / 7d / 30d). |
 | **Sessions** | The management table: search, sort, filter by project, provider, status, account, favorite, recency. |
+| **Recaps** | A shareable recap of a period (today, 7, 30 or 90 days) and some or all projects. Shows observed activity (active projects, sessions, days, provider mix, linked PRs) with its coverage, next to outcomes *you* write (each one goes on the card only when you tick it). Export a share card as a PNG or copy it, plus LinkedIn or Slack/Teams text. Public-safe by default: no account names, titles, IDs, paths, prompts, notes, PR links or unnamed projects. See [docs/recaps.md](docs/recaps.md). |
 | **Favorites / Projects** | Left rail drawers. Projects show compact runtime summaries ("1 needs you · 2 working"). |
 | **Scan** (⌘⇧S) | Discovers Claude Code, Codex and Cowork sessions and suggests projects from their folders. |
 | **Add session** (⌘N) | Paste a Claude link, a Codex thread ID or a Claude Code session ID. |

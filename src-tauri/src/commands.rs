@@ -5,6 +5,7 @@ use crate::integrations;
 use crate::launch::{self, LaunchContext, OpenResult};
 use crate::models::*;
 use crate::providers::{self, claude_desktop::normalize_chat_reference, SessionAdapter};
+use crate::recap::{self, Outcome, OutcomeInput, Recap, RecapQuery};
 use crate::resume;
 use crate::runtime::{self, MonitorState};
 use crate::scan;
@@ -456,6 +457,49 @@ pub fn open_provider_app(app: String) -> HubResult<()> {
         _ => return Err(HubError::new("Unknown app.")),
     };
     launch::open_url(url).map_err(|e| HubError::with_detail("The app couldn't be opened.", e))
+}
+
+// ───────────────────────────── recaps ─────────────────────────────
+
+#[tauri::command]
+pub fn get_recap(state: Db, query: RecapQuery) -> HubResult<Recap> {
+    recap::build(&lock(&state), &query)
+}
+
+#[tauri::command]
+pub fn create_outcome(state: Db, input: OutcomeInput) -> HubResult<Outcome> {
+    recap::create_outcome(&lock(&state), &input)
+}
+
+#[tauri::command]
+pub fn update_outcome(state: Db, id: String, input: OutcomeInput) -> HubResult<Outcome> {
+    recap::update_outcome(&lock(&state), &id, &input)
+}
+
+#[tauri::command]
+pub fn delete_outcome(state: Db, id: String) -> HubResult<()> {
+    recap::delete_outcome(&lock(&state), &id)
+}
+
+/// The share card arrives as the raw PNG body of the request (no base64 round trip).
+fn png_body<'a>(request: &'a tauri::ipc::Request<'_>) -> HubResult<&'a [u8]> {
+    match request.body() {
+        tauri::ipc::InvokeBody::Raw(bytes) => Ok(bytes),
+        _ => Err(HubError::new("That image couldn't be exported.")),
+    }
+}
+
+/// Save a share card the user exported to ~/Downloads. Returns the file's path.
+#[tauri::command]
+pub fn save_recap_image(request: tauri::ipc::Request<'_>) -> HubResult<String> {
+    let dir = std::path::PathBuf::from(crate::association::home_dir()).join("Downloads");
+    recap::save_png(&dir, png_body(&request)?).map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Copy a share card to the clipboard as a PNG.
+#[tauri::command]
+pub fn copy_recap_image(request: tauri::ipc::Request<'_>) -> HubResult<()> {
+    recap::copy_png(png_body(&request)?)
 }
 
 // ───────────────────────────── resume drafts (optional AI) ─────────────────────────────
