@@ -45,6 +45,7 @@ on first launch; the old file is left as a backup. Migrations are an ordered lis
 | `sessions` | the index. `(provider, external_id)` is unique. User-owned flags: `favorite`, `notes`, `project_locked`, `title_locked`, and Follow up (`follow_up_at` when queued, optional `follow_up_due_at` reminder). `runtime_*` columns hold the normalized runtime status (monitor-owned) |
 | `activity_events` | semantic runtime transitions for the Activity timeline (90 days) |
 | `session_links` | optional undirected relationships |
+| `forgotten_sessions` | one marker per session the user forgot: `(provider, external_id)`, the last activity Hoku knew, and when. No titles or text. Removed when the session returns |
 | `recap_outcomes` | one-line milestones the user writes for recaps (text ≤140 chars, local date, optional project). Never inferred |
 | `scan_runs` | per-adapter scan history (for "last scan") |
 | `settings` | key → JSON (terminal preference, first-scan flag, `notifications.*` alert preferences) |
@@ -62,6 +63,13 @@ and deep link. It **never overwrites user intent**:
   runtime monitor doesn't touch them either
 
 Sessions the provider no longer reports are flagged `source_missing`, never deleted.
+
+Forgetting a session (`db::delete_session`) removes Hoku's row only; the provider's copy is
+never touched. A session with a provider id leaves a `forgotten_sessions` marker, and a scan
+adds it back only when the provider reports activity later than both the last activity Hoku
+knew and the time it was forgotten (`db::still_forgotten`). An unchanged, missing or unreadable
+timestamp keeps it forgotten. It returns as a fresh row, without its old note. Adding it again
+by hand clears the marker. Demo sessions and sessions without a provider id leave no marker.
 
 ### Project association (`association.rs`)
 

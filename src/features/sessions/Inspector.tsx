@@ -15,7 +15,7 @@ import { isInferred, reasonText, STATUS, stateSince, statusKey } from "../runtim
 import { StatusDot } from "../runtime/StatusMark";
 import { DueMenu } from "../follow-up/DueMenu";
 import { addedLabel, dueLabel, followUpKey, OVERDUE } from "../follow-up/followUp";
-import { forgetPlan, NEXT_STEP_MAX, nextStepLength } from "./forget";
+import { forgetMessage, forgetPlan, NEXT_STEP_MAX, nextStepLength } from "./forget";
 
 export const INSPECTOR_WIDTH = 348;
 
@@ -349,10 +349,7 @@ function ForgetFooter({ session, note }: { session: Session; note: string }) {
   return (
     <div className="border-t border-line px-4 py-3 text-[12px]" onKeyDown={onKey}>
       <div className="text-ink-2">Forget this session in Hoku?</div>
-      <p className="mt-1 text-[11.5px] leading-relaxed text-ink-3">
-        Removes it from Hoku, with its note, links and activity. {provider}’s copy isn’t touched.
-        {plan.mayReturn && ` If ${provider} still has it, the next scan adds it back without them.`}
-      </p>
+      <p className="mt-1 text-[11.5px] leading-relaxed text-ink-3">{forgetMessage(plan, provider)}</p>
       {plan.canKeep && project && (
         <div className="mt-2.5">
           <label className="flex items-center gap-2 text-ink-2">

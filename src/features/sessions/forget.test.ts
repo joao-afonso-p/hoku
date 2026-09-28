@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Project } from "../../lib/types";
 import { session } from "../../test/fixtures";
-import { forgetPlan, NEXT_STEP_MAX, nextStepLength } from "./forget";
+import { forgetMessage, forgetPlan, NEXT_STEP_MAX, nextStepLength } from "./forget";
 
 const project = (p: Partial<Project> = {}): Project => ({
   id: "p1",
@@ -14,10 +14,10 @@ const project = (p: Partial<Project> = {}): Project => ({
 });
 
 describe("forgetPlan", () => {
-  it("warns that a scanned session still at its source comes back", () => {
-    expect(forgetPlan(session({ discovery: "scan" }), undefined).mayReturn).toBe(true);
-    expect(forgetPlan(session({ discovery: "scan", sourceMissing: true }), undefined).mayReturn).toBe(false);
-    expect(forgetPlan(session({ discovery: "manual" }), undefined).mayReturn).toBe(false);
+  it("marks scanned sessions, whether or not the provider still has them", () => {
+    expect(forgetPlan(session({ discovery: "scan" }), undefined).scanned).toBe(true);
+    expect(forgetPlan(session({ discovery: "scan", sourceMissing: true }), undefined).scanned).toBe(true);
+    expect(forgetPlan(session({ discovery: "manual" }), undefined).scanned).toBe(false);
   });
 
   it("keeps the note by default only when there's no next step to replace", () => {
@@ -46,5 +46,19 @@ describe("nextStepLength", () => {
     expect(nextStepLength("  abc  ")).toBe(3);
     expect(nextStepLength("🚀".repeat(NEXT_STEP_MAX))).toBe(NEXT_STEP_MAX);
     expect(nextStepLength("x".repeat(NEXT_STEP_MAX + 1))).toBeGreaterThan(NEXT_STEP_MAX);
+  });
+});
+
+describe("forgetMessage", () => {
+  it("says an unchanged scan leaves a forgotten session out, and only new activity brings it back", () => {
+    const scanned = forgetMessage(forgetPlan(session({ discovery: "scan" }), undefined), "Codex");
+    expect(scanned).toContain("Codex’s copy isn’t touched");
+    expect(scanned).toContain("Scans leave it out until it has new activity in Codex");
+    expect(scanned).not.toMatch(/next scan adds it back/);
+  });
+
+  it("doesn't mention scans for sessions added by hand", () => {
+    const manual = forgetMessage(forgetPlan(session({ discovery: "manual" }), undefined), "Claude");
+    expect(manual).toBe("Removes it from Hoku, with its note, links and activity. Claude’s copy isn’t touched.");
   });
 });
