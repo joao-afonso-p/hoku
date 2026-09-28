@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { copy, fail, followUp, followUpDone, openSession, patchSession, reload, removeSession, reveal, select, toggleFavorite } from "../../app/actions";
+import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import { copy, fail, followUp, followUpDone, forgetSession, openSession, patchSession, reload, reveal, select, toggleFavorite } from "../../app/actions";
 import { useHub } from "../../app/store";
 import { useMinuteClock } from "../../app/useClock";
 import { useVisibility } from "../../app/model";
@@ -15,6 +15,7 @@ import { isInferred, reasonText, STATUS, stateSince, statusKey } from "../runtim
 import { StatusDot } from "../runtime/StatusMark";
 import { DueMenu } from "../follow-up/DueMenu";
 import { addedLabel, dueLabel, followUpKey, OVERDUE } from "../follow-up/followUp";
+import { forgetMessage, forgetPlan, NEXT_STEP_MAX, nextStepLength } from "./forget";
 
 export const INSPECTOR_WIDTH = 348;
 
@@ -291,15 +292,95 @@ export function Inspector({ session }: { session: Session }) {
         </div>
       </div>
 
+      <ForgetFooter key={session.id} session={session} note={notes} />
+    </aside>
+  );
+}
+
+/**
+ * Forget removes Hoku's record only, never the provider's copy. Say so before it happens, and
+ * offer to keep the note as the project's next step, since it would be lost with the record.
+ */
+function ForgetFooter({ session, note }: { session: Session; note: string }) {
+  const project = useHub((s) => s.data.projects.find((x) => x.id === session.projectId));
+  const [open, setOpen] = useState(false);
+  const [keep, setKeep] = useState(false);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const provider = PROVIDERS[session.provider].label;
+  const plan = forgetPlan(session, project, note);
+  // The note can be cleared while the confirm is open; never keep what's no longer offered.
+  const keeping = keep && plan.canKeep;
+  const length = nextStepLength(text);
+
+  if (!open) {
+    return (
       <div className="flex items-center justify-between border-t border-line px-4 py-2.5">
         <span className="text-[11px] text-ink-4">
           Double-click title to rename · <span className="kbd">F</span> follow up
         </span>
-        <button className="btn btn-ghost h-7 px-2 text-[12px] text-ink-3 hover:text-danger" onClick={() => void removeSession(session)}>
-          <IconTrash size={13} /> Remove
+        <button
+          className="btn btn-ghost h-7 px-2 text-[12px] text-ink-3 hover:text-danger"
+          onClick={() => {
+            setKeep(plan.keepByDefault);
+            setText(plan.note);
+            setOpen(true);
+          }}
+          title={`Remove from Hoku. ${provider} keeps its copy.`}
+        >
+          <IconTrash size={13} /> Forget
         </button>
       </div>
-    </aside>
+    );
+  }
+
+  const forget = async () => {
+    setBusy(true);
+    await forgetSession(session, keeping ? text.trim() : undefined);
+    setBusy(false);
+  };
+  // Keys act on the confirm, not the app (Enter would open the session, F toggle follow up).
+  const onKey = (e: KeyboardEvent) => {
+    if (e.metaKey || e.ctrlKey) return;
+    e.stopPropagation();
+    if (e.key === "Escape") setOpen(false);
+  };
+
+  return (
+    <div className="border-t border-line px-4 py-3 text-[12px]" onKeyDown={onKey}>
+      <div className="text-ink-2">Forget this session in Hoku?</div>
+      <p className="mt-1 text-[11.5px] leading-relaxed text-ink-3">{forgetMessage(plan, provider)}</p>
+      {plan.canKeep && project && (
+        <div className="mt-2.5">
+          <label className="flex items-center gap-2 text-ink-2">
+            <input type="checkbox" className="accent-star" checked={keep} onChange={(e) => setKeep(e.target.checked)} />
+            {plan.replaces ? `Replace ${project.name}’s next step with the note` : `Keep the note as ${project.name}’s next step`}
+          </label>
+          {keeping && (
+            <>
+              {plan.replaces && <p className="mt-1 line-clamp-2 text-[11px] text-ink-4">Now: “{plan.replaces}”</p>}
+              <textarea
+                className="field mt-1.5 min-h-[56px] resize-none text-[12px] leading-relaxed"
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                aria-label="Next step"
+              />
+              <div className={`mt-0.5 text-right text-[10.5px] tabular-nums ${length > NEXT_STEP_MAX ? "text-danger" : "text-ink-4"}`}>
+                {length}/{NEXT_STEP_MAX}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+      <div className="mt-2.5 flex justify-end gap-1.5">
+        <button className="btn btn-ghost" autoFocus onClick={() => setOpen(false)}>
+          Cancel
+        </button>
+        <button className="btn text-danger" disabled={busy || (keeping && (length === 0 || length > NEXT_STEP_MAX))} onClick={() => void forget()}>
+          <IconTrash size={13} /> Forget
+        </button>
+      </div>
+    </div>
   );
 }
 

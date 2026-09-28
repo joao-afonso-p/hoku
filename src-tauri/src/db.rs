@@ -156,6 +156,17 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE sessions ADD COLUMN follow_up_at      TEXT;
     ALTER TABLE sessions ADD COLUMN follow_up_due_at  TEXT;
     "#,
+    // v7 — Forgotten sessions: just enough to keep a scan from adding a forgotten session
+    // straight back. One row per forgotten session, removed when it returns. No titles or text.
+    r#"
+    CREATE TABLE forgotten_sessions (
+        provider      TEXT NOT NULL,
+        external_id   TEXT NOT NULL,
+        activity_at   TEXT,
+        forgotten_at  TEXT NOT NULL,
+        PRIMARY KEY (provider, external_id)
+    );
+    "#,
 ];
 
 /// The bundle identifier before Hoku had its own (`com.hoku.app`). The app-data folder is
@@ -553,6 +564,13 @@ pub fn insert_manual_session(conn: &Connection, s: ManualSessionInput) -> HubRes
             "Give the session a title so you can find it later.",
         ));
     }
+    if let Some(ext) = &s.external_id {
+        // Adding it by hand is explicit: it's no longer forgotten.
+        conn.execute(
+            "DELETE FROM forgotten_sessions WHERE provider = ?1 AND external_id = ?2",
+            params![s.provider.as_str(), ext],
+        )?;
+    }
     let now = now_iso();
     let id = new_id();
     conn.execute(
@@ -689,9 +707,61 @@ pub fn set_follow_up(
     Ok(get_session(conn, id)?.expect("exists"))
 }
 
+/// Forget a session: Hoku's row only, never the provider's copy. A session with a provider id
+/// leaves a marker so scans don't add it straight back (see `still_forgotten`).
 pub fn delete_session(conn: &Connection, id: &str) -> HubResult<()> {
-    conn.execute("DELETE FROM sessions WHERE id = ?", [id])?;
+    let tx = conn.unchecked_transaction()?;
+    if let Some(s) = get_session(&tx, id)? {
+        if let Some(ext) = s
+            .external_id
+            .as_deref()
+            .filter(|_| s.source.as_deref() != Some("demo"))
+        {
+            tx.execute(
+                "INSERT OR REPLACE INTO forgotten_sessions (provider, external_id, activity_at, forgotten_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![s.provider.as_str(), ext, s.last_activity_at, now_iso()],
+            )?;
+        }
+        tx.execute("DELETE FROM sessions WHERE id = ?", [id])?;
+    }
+    tx.commit()?;
     Ok(())
+}
+
+/// A forgotten session stays forgotten until the provider reports activity later than both the
+/// last activity Hoku knew and the moment it was forgotten. No timestamp counts as no new
+/// activity. When it does return, the marker goes.
+fn still_forgotten(
+    conn: &Connection,
+    provider: Provider,
+    external_id: &str,
+    activity_at: Option<&str>,
+) -> rusqlite::Result<bool> {
+    let marker: Option<(Option<String>, String)> = conn
+        .query_row(
+            "SELECT activity_at, forgotten_at FROM forgotten_sessions WHERE provider = ?1 AND external_id = ?2",
+            params![provider.as_str(), external_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    let Some((known, forgotten_at)) = marker else {
+        return Ok(false);
+    };
+    let time = |v: &str| chrono::DateTime::parse_from_rfc3339(v.trim()).ok();
+    let baseline = [known.as_deref(), Some(forgotten_at.as_str())]
+        .into_iter()
+        .flatten()
+        .filter_map(time)
+        .max();
+    let newer = matches!((activity_at.and_then(time), baseline), (Some(a), Some(b)) if a > b);
+    if newer {
+        conn.execute(
+            "DELETE FROM forgotten_sessions WHERE provider = ?1 AND external_id = ?2",
+            params![provider.as_str(), external_id],
+        )?;
+    }
+    Ok(!newer)
 }
 
 pub fn mark_opened(conn: &Connection, id: &str) -> rusqlite::Result<()> {
@@ -815,6 +885,8 @@ pub enum UpsertOutcome {
     New,
     Updated,
     Unchanged,
+    /// The user forgot it and the provider shows no newer activity: not added back.
+    Forgotten,
 }
 
 /// Merge a discovered session into the hub. User-owned fields (title if renamed, notes,
@@ -832,6 +904,14 @@ pub fn upsert_discovered(
 
     match find_session_by_external(conn, provider, &d.external_id)? {
         None => {
+            if still_forgotten(
+                conn,
+                provider,
+                &d.external_id,
+                d.last_activity_at.as_deref(),
+            )? {
+                return Ok(UpsertOutcome::Forgotten);
+            }
             conn.execute(
                 "INSERT INTO sessions (id, provider, provider_account_id, external_id, title, project_id,
                     working_directory, repository, branch, source, source_url, deep_link,
@@ -1636,6 +1716,173 @@ mod tests {
         assert_eq!(snapshot(&c).unwrap().activity.len(), 1);
         delete_session(&c, &s.id).unwrap();
         assert!(snapshot(&c).unwrap().activity.is_empty());
+    }
+
+    #[test]
+    fn forgetting_a_session_keeps_the_next_step_saved_from_its_note() {
+        let c = open_in_memory();
+        let p = project(&c, "Atlas", Some("/u/atlas"));
+        let d = DiscoveredSession {
+            external_id: "x".into(),
+            title: "t".into(),
+            working_directory: Some("/u/atlas".into()),
+            ..Default::default()
+        };
+        upsert_discovered(
+            &c,
+            Provider::Codex,
+            "codex-state-db",
+            &d,
+            Some(p.id.clone()),
+            None,
+        )
+        .unwrap();
+        let s = find_session_by_external(&c, Provider::Codex, "x")
+            .unwrap()
+            .unwrap();
+        // The inspector saves the note as the next step, then forgets the session.
+        let kept = update_project_resume(&c, &p.id, None, Some(Some("Ship the migration".into())))
+            .unwrap();
+        delete_session(&c, &s.id).unwrap();
+        let after = get_project(&c, &p.id).unwrap().unwrap();
+        assert!(get_session(&c, &s.id).unwrap().is_none());
+        assert_eq!(after.next_step.as_deref(), Some("Ship the migration"));
+        assert_eq!(after.resume_updated_at, kept.resume_updated_at);
+    }
+
+    fn scan_codex(c: &Connection, ext: &str, activity: Option<&str>) -> UpsertOutcome {
+        let d = DiscoveredSession {
+            external_id: ext.into(),
+            title: "Scanned".into(),
+            last_activity_at: activity.map(Into::into),
+            ..Default::default()
+        };
+        upsert_discovered(c, Provider::Codex, "codex-state-db", &d, None, None).unwrap()
+    }
+
+    fn forgotten_count(c: &Connection) -> i64 {
+        c.query_row("SELECT COUNT(*) FROM forgotten_sessions", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn a_forgotten_session_stays_forgotten_until_newer_activity() {
+        let c = open_in_memory();
+        let known = "2026-01-10T09:00:00.000Z";
+        assert!(matches!(
+            scan_codex(&c, "t1", Some(known)),
+            UpsertOutcome::New
+        ));
+        let s = find_session_by_external(&c, Provider::Codex, "t1")
+            .unwrap()
+            .unwrap();
+        update_session(
+            &c,
+            &s.id,
+            SessionPatch {
+                notes: Some(Some("mine".into())),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        delete_session(&c, &s.id).unwrap();
+        // The same activity, none, an unreadable one, or activity from before it was forgotten
+        // (in any offset): it stays forgotten.
+        for activity in [
+            Some(known),
+            None,
+            Some("not a date"),
+            Some("2026-01-10T10:00:00.000Z"),
+            Some("2026-01-10T11:00:00+01:00"),
+        ] {
+            assert!(matches!(
+                scan_codex(&c, "t1", activity),
+                UpsertOutcome::Forgotten
+            ));
+            assert!(find_session_by_external(&c, Provider::Codex, "t1")
+                .unwrap()
+                .is_none());
+        }
+        // Activity after it was forgotten brings it back: a fresh row, without the old note.
+        let later = (Utc::now() + chrono::Duration::minutes(1))
+            .to_rfc3339_opts(SecondsFormat::Millis, true);
+        assert!(matches!(
+            scan_codex(&c, "t1", Some(&later)),
+            UpsertOutcome::New
+        ));
+        let back = find_session_by_external(&c, Provider::Codex, "t1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(back.notes, None);
+        assert_eq!(forgotten_count(&c), 0);
+        assert!(matches!(
+            scan_codex(&c, "t1", Some(&later)),
+            UpsertOutcome::Unchanged
+        ));
+    }
+
+    #[test]
+    fn forgetting_manual_and_demo_sessions() {
+        let c = open_in_memory();
+        let input = |ext: Option<&str>, source: &str| ManualSessionInput {
+            provider: Provider::Codex,
+            external_id: ext.map(Into::into),
+            title: "Mine".into(),
+            project_id: None,
+            provider_account_id: None,
+            working_directory: None,
+            deep_link: None,
+            source_url: None,
+            notes: None,
+            source: source.into(),
+            metadata: None,
+            last_activity_at: Some("2026-01-10T09:00:00.000Z".into()),
+            runtime: None,
+            favorite: false,
+        };
+        // No provider id or demo data: nothing a scan could bring back, so no marker.
+        let plain = insert_manual_session(&c, input(None, "manual")).unwrap();
+        let demo = insert_manual_session(&c, input(Some("d1"), "demo")).unwrap();
+        delete_session(&c, &plain.id).unwrap();
+        delete_session(&c, &demo.id).unwrap();
+        assert_eq!(forgotten_count(&c), 0);
+        // With a provider id, scans respect the marker like any scanned session.
+        let m = insert_manual_session(&c, input(Some("m1"), "manual")).unwrap();
+        delete_session(&c, &m.id).unwrap();
+        assert!(matches!(
+            scan_codex(&c, "m1", Some("2026-01-10T09:00:00.000Z")),
+            UpsertOutcome::Forgotten
+        ));
+        // Adding it again by hand is explicit and always works.
+        insert_manual_session(&c, input(Some("m1"), "manual")).unwrap();
+        assert_eq!(forgotten_count(&c), 0);
+    }
+
+    #[test]
+    fn migrates_a_v6_database_keeping_sessions() {
+        let c = Connection::open_in_memory().unwrap();
+        for (i, sql) in MIGRATIONS[..6].iter().enumerate() {
+            c.execute_batch(&format!(
+                "BEGIN; {sql}; PRAGMA user_version = {}; COMMIT;",
+                i + 1
+            ))
+            .unwrap();
+        }
+        c.execute_batch(
+            "INSERT INTO sessions (id, provider, external_id, title, source, discovery, notes, created_at, updated_at)
+               VALUES ('a','codex','x','Mine','codex-state-db','scan','keep me','t','t');",
+        )
+        .unwrap();
+        migrate(&c).unwrap();
+        let s = get_session(&c, "a").unwrap().unwrap();
+        assert_eq!(s.notes.as_deref(), Some("keep me"));
+        assert_eq!(
+            forgotten_count(&c),
+            0,
+            "nothing is forgotten by the migration"
+        );
+        delete_session(&c, "a").unwrap();
+        assert_eq!(forgotten_count(&c), 1);
     }
 
     #[test]

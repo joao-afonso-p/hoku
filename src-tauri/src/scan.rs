@@ -125,7 +125,7 @@ fn merge(
         match db::upsert_discovered(c, provider, adapter.key(), d, project, Some(account))? {
             db::UpsertOutcome::New => result.new += 1,
             db::UpsertOutcome::Updated => result.updated += 1,
-            db::UpsertOutcome::Unchanged => {}
+            db::UpsertOutcome::Unchanged | db::UpsertOutcome::Forgotten => {}
         }
         seen.push(d.external_id.clone());
     }

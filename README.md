@@ -138,8 +138,8 @@ Account state comes from `claude auth status` (email, org, plan) and `codex logi
 - A Codex account's email isn't readable without opening its credential file, which the app
   doesn't do. The Codex account shows as "Connected externally".
 - Follow up reminders are shown inside Hoku only (rail badge, queue, inspector). There are no
-  macOS notifications yet. Removing a session from the index also removes its follow-up; a
-  scanned session that comes back on the next scan returns without one.
+  macOS notifications yet. Forgetting a session in Hoku also removes its follow-up; if new
+  activity brings it back on a later scan, it returns without one.
 - One root folder per project. Sessions elsewhere can be dragged in or reassigned by hand,
   and that choice sticks.
 - The Cowork deep link is verified in Claude Desktop's code and accepted without warnings,
