@@ -1,0 +1,38 @@
+---
+title: Search with ⌘K
+description: Find any session, project or action with the command palette, and act on it from the keyboard.
+---
+
+Press <kbd>⌘</kbd><kbd>K</kbd> anywhere, or click **Search all sessions…** in the top bar.
+
+![The command palette with the query "release". Five sessions called Release notes are listed, each with its provider, project, state and age. The top one is a Claude session in Demo · Vega that needs you, waiting for permission. The footer shows the keys Open, Show on map, Filter to Needs You and Copy ID.](../../../../../docs/images/command-palette.png)
+
+Search always covers **every** session Hoku has indexed, including sessions hidden from the Current map, filtered out, or in archived projects. It matches:
+
+- session titles, project names and provider names
+- your notes
+- branches and folders
+- account labels
+- the first-prompt preview
+- the state, so typing "needs you" or "working" finds sessions in that state
+- "follow up", for sessions on your list.
+
+It also finds projects and actions, such as *Scan for sessions*, *Show Recaps*, *Resume this project* or *Filter Galaxy: Needs You*.
+
+With nothing typed, it lists sessions that need you, are live, or were recent, then a few actions.
+
+## Keys in the palette
+
+| Key | On a session |
+|---|---|
+| <kbd>↵</kbd> | Open it: **Go to terminal** for Claude Code, or open it in its app |
+| <kbd>⌘</kbd><kbd>↵</kbd> | Show it on the map with its inspector, even if it's hidden |
+| <kbd>⌥</kbd><kbd>↵</kbd> | Filter the Galaxy to that session's state |
+| <kbd>⌘</kbd><kbd>P</kbd> | Go to its project |
+| <kbd>⌘</kbd><kbd>D</kbd> | Favorite or unfavorite it |
+| <kbd>⌘</kbd><kbd>F</kbd> | Add it to Follow up, or mark it done |
+| <kbd>⌘</kbd><kbd>C</kbd> | Copy its ID |
+| <kbd>↑</kbd> <kbd>↓</kbd> (or <kbd>Ctrl</kbd><kbd>P</kbd> / <kbd>Ctrl</kbd><kbd>N</kbd>) | Move through results |
+| <kbd>Esc</kbd> | Close |
+
+On a project, <kbd>↵</kbd> zooms into it. An archived project opens its edit sheet, where you can restore it. On an action, <kbd>↵</kbd> runs it.

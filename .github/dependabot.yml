@@ -18,6 +18,16 @@ updates:
       npm-minor-and-patch:
         update-types: [minor, patch]
 
+  # The documentation site (site/) has its own package.json and lockfile.
+  - package-ecosystem: npm
+    directory: /site
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      docs-site:
+        patterns: ["*"]
+
   - package-ecosystem: cargo
     directory: /src-tauri
     schedule:

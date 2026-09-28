@@ -1,0 +1,62 @@
+---
+title: "Your data: backup, reset, uninstall"
+description: Where Hoku keeps its index, how to back it up or start fresh, and how to remove Hoku completely.
+---
+
+import { Steps } from "@astrojs/starlight/components";
+
+## Where it lives
+
+Hoku keeps everything in one SQLite database:
+
+```text
+~/Library/Application Support/com.hoku.app/hub.sqlite
+```
+
+The same folder can hold `hub.sqlite-wal` and `hub.sqlite-shm`, which SQLite uses while Hoku runs. **Settings → Privacy** shows the path.
+
+The index is outside the app, so installing, updating or reinstalling Hoku never touches it. Provider data (`~/.claude`, `~/.codex`, Claude Desktop's folders) isn't in it, and nothing you do in Hoku changes that data.
+
+## Back up
+
+<Steps>
+
+1. Quit Hoku (<kbd>⌘</kbd><kbd>Q</kbd>), so the database is fully written.
+2. Copy the folder `~/Library/Application Support/com.hoku.app` somewhere safe. In Finder, use **Go → Go to Folder…** and paste `~/Library/Application Support`.
+
+</Steps>
+
+To restore, quit Hoku and put the folder back.
+
+What a backup holds: your projects, notes, favorites, follow-ups, recap outcomes, settings and the session index. Sessions themselves stay in their providers. After a restore, a scan refreshes anything that changed.
+
+## Start fresh
+
+To reset Hoku without losing anything:
+
+<Steps>
+
+1. Quit Hoku.
+2. Rename or move `~/Library/Application Support/com.hoku.app`, for example to `com.hoku.app.old`.
+3. Open Hoku. It starts empty, as on the [first run](/hoku/start/first-run/).
+
+</Steps>
+
+To go back, quit Hoku and swap the folders again.
+
+To remove only demo data, use **Settings → Demo data → Remove demo data**.
+
+## Uninstall
+
+<Steps>
+
+1. Quit Hoku.
+2. Move `/Applications/Hoku.app` to the Trash (or `~/Applications/Hoku.app`, if you installed it there).
+3. To remove your data too, delete `~/Library/Application Support/com.hoku.app`. This can't be undone: back it up first if you might come back.
+4. Optionally, clean up permissions in **System Settings**:
+   - **Privacy & Security → Automation**: Hoku's entries for iTerm or Terminal (there may be one per version you used)
+   - **Notifications**: Hoku.
+
+</Steps>
+
+Uninstalling Hoku doesn't affect Claude Code, Codex or Claude Desktop, or any of their sessions.

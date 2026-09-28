@@ -1,0 +1,31 @@
+/*
+ * Hoku's warm starlight accent. Contrast checked against Starlight's backgrounds:
+ * links and primary buttons stay above WCAG AA (4.5:1) in both themes.
+ */
+:root {
+  --sl-color-accent-low: #3b2d1c;
+  --sl-color-accent: #c9955a;
+  --sl-color-accent-high: #f1dcc0;
+}
+
+:root[data-theme="light"] {
+  --sl-color-accent-low: #f3e3cf;
+  --sl-color-accent: #8a5a1f;
+  --sl-color-accent-high: #4a3010;
+}
+
+/* Screenshots are dark UI: give them an edge on dark pages and a quiet frame on light ones. */
+.sl-markdown-content img {
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: 0.5rem;
+}
+
+.sl-markdown-content kbd {
+  font-family: var(--sl-font-system);
+  font-size: 0.85em;
+  padding: 0.05em 0.4em;
+  border: 1px solid var(--sl-color-gray-4);
+  border-bottom-width: 2px;
+  border-radius: 0.3rem;
+  white-space: nowrap;
+}

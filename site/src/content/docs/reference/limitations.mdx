@@ -1,0 +1,44 @@
+---
+title: Known limitations
+description: What Hoku can't do today, by area, and why.
+---
+
+Hoku is pre-1.0. These are the current limits, most of them set by what each provider exposes.
+
+## Platform and install
+
+- **macOS only.** Opening sessions relies on AppleScript, iTerm or Terminal, and macOS app links. There are no Windows or Linux versions.
+- **Apple Silicon releases only.** On an Intel Mac, [build from source](https://github.com/joao-afonso-p/hoku#running).
+- **Not notarized by Apple.** A DMG you download needs one **Open Anyway** per version. The install script avoids that prompt by checking the download itself. See [Install and update](/hoku/start/install/).
+- **No automatic updates.** Run the install command again, or download the new DMG.
+- **Automation permission is asked again after each update**, because the ad-hoc signature has no fixed developer identity.
+
+## Discovery
+
+- **Claude Desktop chats can't be discovered.** They live on claude.ai. Add them by link and give them a title.
+- **Claude Code deletes old transcripts.** Those sessions stay in Hoku as *Transcript no longer on disk* and can't be resumed.
+- **One root folder per project.** Sessions elsewhere can be moved in by hand, and that choice sticks.
+- **Codex skips** archived threads, automation runs and sub-agents on purpose.
+
+## Live state
+
+- **Codex approvals are inferred**, because Codex doesn't record approval requests. Some approvals leave no trace and show as Working: a patch outside the writable folders, MCP tool approvals, and commands Codex itself classes as dangerous. See [Codex Desktop](/hoku/providers/codex/#live-state-partial).
+- **Cowork sessions have limited state** and never appear in Needs You. **Chats have none**.
+- **State history is recorded only while Hoku runs.** Activity, Resume's *What changed* and recap numbers can't include state changes from while Hoku was closed. Recaps say how much history they cover.
+
+## Opening sessions
+
+- **VS Code:** Hoku brings VS Code forward but can't select the exact integrated-terminal tab or window. Forks such as Cursor aren't recognized.
+- **Warp, tmux and other terminals** aren't switched to. Hoku tells you where the session runs instead of starting a second copy.
+- **Terminal gets a window, not a tab**, because Terminal can't open tabs without Accessibility access.
+- **The Cowork link** is checked against Claude Desktop's code and opens without warnings, but it isn't documented by Anthropic.
+
+## Accounts
+
+- **The Codex account email isn't shown.** It's only in Codex's credential file, which Hoku never opens, so the account reads *Connected externally*.
+
+## Alerts and reminders
+
+- **Needs You notifications only arrive while Hoku is running.** Nothing is pushed from a server.
+- **Follow up reminders are in-app only:** the rail badge, the drawer and the inspector. There are no macOS notifications for them.
+- Forgetting a session also removes its follow-up. If new activity brings it back, it returns without one.

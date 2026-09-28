@@ -1,0 +1,27 @@
+---
+title: Supported providers
+description: What Hoku can find, see and open for Claude Code, Codex Desktop and Claude Desktop, side by side.
+---
+
+import { LinkCard, CardGrid } from "@astrojs/starlight/components";
+
+Hoku works with three providers. It reads each one's local data read-only, and never needs your password or tokens.
+
+| Provider | How sessions are found | Live state | How they open |
+|---|---|---|---|
+| **Claude Code** | Automatically, from its transcripts in `~/.claude/projects` | **Full**, reported by Claude Code itself | **Go to terminal**: switch to its tab, attach, or resume |
+| **Codex Desktop** | Automatically, from its thread index in `~/.codex` | **Partial**: approvals are inferred | In Codex Desktop, directly to the thread |
+| **Claude Desktop, Cowork** | Automatically, from local session metadata | **Limited**: whether it's likely working | In Claude Desktop |
+| **Claude Desktop, chats** | **By hand only**: paste a link | **None** | In Claude Desktop, or on claude.ai |
+
+The **Integrations** screen (the orbit icon near the bottom of the rail) shows this for your Mac. It lists which apps and command-line tools are installed, your sign-in state, how many sessions are indexed, and what each source supports: ✓ full, ◐ inferred, — not available. **Scan sessions** there rescans just that provider. **Open Claude** or **Open Codex** launches the app.
+
+**Account status** comes only from the providers' own status commands: `claude auth status` for Claude (it reports the email, organization and plan) and `codex login status` for Codex (it reports only how you signed in). These commands print no secrets, but they may contact their provider's servers themselves.
+
+<CardGrid>
+  <LinkCard title="Claude Code" href="/hoku/providers/claude-code/" />
+  <LinkCard title="Codex Desktop" href="/hoku/providers/codex/" />
+  <LinkCard title="Claude Desktop" description="Cowork sessions and chats" href="/hoku/providers/claude-desktop/" />
+</CardGrid>
+
+Want another tool supported? Open a [provider integration request](https://github.com/joao-afonso-p/hoku/issues/new/choose). It asks where the tool keeps its data and how sessions can be reopened.

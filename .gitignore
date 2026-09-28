@@ -26,6 +26,9 @@ dist-ssr
 # test/report artifacts
 .vitest
 
+# documentation site (site/) build cache
+.astro
+
 # local agent/tooling state
 .claude/
 
