@@ -37,7 +37,7 @@ export function SpacesHelpSheet({ app }: { app: string }) {
       }
     >
       <div className="space-y-4 text-[12.5px] leading-relaxed text-ink-2">
-        <p>Change one macOS setting once, and “Switch to its terminal” takes you straight to the session, whichever desktop it’s on.</p>
+        <p>Change one macOS setting once, and “Go to terminal” takes you straight to the session, whichever desktop it’s on.</p>
         <ol className="space-y-2.5">
           <Step n={1}>
             Open <b className="font-medium text-ink">System Settings → Desktop &amp; Dock</b> (the button below does this).
@@ -54,7 +54,7 @@ export function SpacesHelpSheet({ app }: { app: string }) {
             <span className="text-ink-3">Checking the setting…</span>
           ) : enabled ? (
             <span className="flex items-center gap-1.5 text-ok">
-              <IconCheck size={13} /> The setting is on. Try “Switch to its terminal” again; it will take you there from now on.
+              <IconCheck size={13} /> The setting is on. Try “Go to terminal” again; it will take you there from now on.
             </span>
           ) : (
             <span className="text-ink-3">The setting is currently off. This updates when you come back to Hoku.</span>

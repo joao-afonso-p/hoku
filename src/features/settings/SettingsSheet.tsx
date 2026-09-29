@@ -165,6 +165,8 @@ export function SettingsSheet() {
               ["⌘ ⇧ S", "Scan for sessions"],
               ["Tab / ⇧ Tab", "Next / previous session"],
               ["↵", "Open selected session"],
+              ["F", "Follow up / done"],
+              ["⌘ C", "Copy session ID"],
               ["⌘ 1–9", "Jump to project"],
               ["Esc", "Back out one level"],
               ["⌘ 0", "Galaxy view"],
