@@ -115,6 +115,7 @@ doesn't use it. Instead:
 | Push a tag `vX.Y.Z` | `Hoku_X.Y.Z_aarch64.dmg` + `SHA256SUMS.txt` + provenance attestation, attached to a **draft** GitHub Release for that tag |
 | *Run workflow* from a branch | Rehearsal: the same DMG and checksums as a workflow artifact (kept 14 days). No release. |
 | *Run workflow* from a tag | Same as pushing the tag (use it to retry a failed release) |
+| The Version workflow tags a merged release PR | Same as pushing the tag: it starts this workflow for the new tag |
 
 The workflow never publishes anything. A maintainer publishes the draft by hand after
 the [clean-machine test](#clean-machine-installation-test). It refuses to replace the
@@ -140,7 +141,7 @@ It has three jobs:
    `id-token`/`attestations` permissions the attestation needs).
 
 The workflow uses no secrets. Third-party actions are pinned to commit SHAs, and
-there are no build caches. `ci.yml` is unchanged.
+there are no build caches.
 
 **Never touched by the workflow.** It runs on a fresh GitHub-hosted runner. It never
 launches Hoku and never runs the `#[ignore]`d probes (`probe_this_mac`,
@@ -150,57 +151,72 @@ folders, provider credentials, or a Hoku index, and the runner has none of them.
 
 ## One-time repository setup
 
-Nothing is required: the workflow runs with the default `GITHUB_TOKEN`. Recommended:
+The workflows run with the default `GITHUB_TOKEN` and no secrets.
 
-- A **tag ruleset** (*Settings → Rules → Rulesets → New tag ruleset*, target `v*`) that
-  restricts who can create, update and delete release tags.
-- Keep *Settings → Actions → General → Workflow permissions* at the default read-only.
-  The release job requests the write permissions it needs itself.
+- **Allow the release PR.** *Settings → Actions → General → Workflow permissions →
+  "Allow GitHub Actions to create and approve pull requests"*. The Version workflow needs
+  it to open the release pull request. Without it, the workflow still pushes the
+  `release/next` branch and prints a link to open the pull request by hand.
+- Keep *Workflow permissions* at the default read-only. Each job requests the write
+  permissions it needs itself.
+- Optional: a **tag ruleset** (*Settings → Rules → Rulesets → New tag ruleset*, target
+  `v*`) that restricts who can create, update and delete release tags. If you add one,
+  let GitHub Actions create `v*` tags (for example through the ruleset's bypass list), or
+  the Version workflow can't tag releases.
 
 ## Cutting a release
 
-Versions follow [SemVer](https://semver.org). The version lives in three files that must
-match: `package.json`, `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`. The
-release tag is `v` plus that version. The workflow enforces both.
+Versions follow [SemVer](https://semver.org). The version lives in `package.json`,
+`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and the app's entry in
+`src-tauri/Cargo.lock`, which must all match. The release tag is `v` plus that version.
+The Release workflow enforces both. Settings shows the version from `package.json`.
 
-```bash
-# 1. Bump the version on a branch and merge it through a pull request.
-git switch main && git pull --ff-only
-git switch -c release/v0.2.0
-#    edit "version" in package.json, src-tauri/tauri.conf.json and src-tauri/Cargo.toml
-(cd src-tauri && cargo check)          # refreshes Cargo.lock for the new version
-pnpm typecheck && pnpm test && pnpm build
-(cd src-tauri && cargo fmt --check && cargo test)
-git commit -am "chore: release v0.2.0"
-git push -u origin release/v0.2.0      # then open a PR, wait for CI, merge
+Releases follow `main` automatically, through the **Version** workflow
+([`.github/workflows/version.yml`](../.github/workflows/version.yml)), which runs after
+every merge:
 
-# 2. Tag the merged commit on main and push only the tag.
-git switch main && git pull --ff-only
-git tag -a v0.2.0 -m "Hoku 0.2.0"
-git push origin v0.2.0
+1. **A release PR keeps itself up to date.** When releasable commits land on `main`, the
+   workflow opens (or updates) one pull request, `chore: release vX.Y.Z`, on the branch
+   `release/next`. [`scripts/next-version.mjs`](../scripts/next-version.mjs) picks the
+   version from the [Conventional Commits](https://www.conventionalcommits.org/) since the
+   last tag:
+   - `feat` bumps the minor version
+   - `fix` and `perf` bump the patch version
+   - a breaking change (`feat!:` or `BREAKING CHANGE:`) bumps the major version, or the
+     minor version while Hoku is below 1.0.
 
-# 3. Watch the release run.
-gh run watch
+   `docs`, `ci`, `chore`, `test`, `refactor` and `style` commits don't release on their
+   own. [`scripts/bump-version.mjs`](../scripts/bump-version.mjs) sets the version in every
+   file listed above, and the workflow starts CI on the branch. The pull request lists the
+   changes since the last release.
+2. **Merging the release PR releases.** On that merge, the workflow sees a version with no
+   tag, tags the commit `vX.Y.Z` and starts the Release workflow for the tag. That builds
+   the DMG and drafts the GitHub Release.
+3. **Before merging,** check that the user guide in `site/` covers every user-facing change
+   listed in the pull request (see [site/README.md](../site/README.md)).
+4. **Publish the draft** after the [clean-machine test](#clean-machine-installation-test):
 
-# 4. Check the draft: download, verify, test on a clean machine.
-gh release download v0.2.0 --dir ./hoku-v0.2.0
-(cd hoku-v0.2.0 && shasum -a 256 -c SHA256SUMS.txt)
-gh attestation verify hoku-v0.2.0/Hoku_0.2.0_aarch64.dmg --repo joao-afonso-p/hoku
-./scripts/verify-macos-release.sh hoku-v0.2.0/Hoku_0.2.0_aarch64.dmg --version 0.2.0
+   ```bash
+   gh release download vX.Y.Z --dir ./hoku-vX.Y.Z
+   (cd hoku-vX.Y.Z && shasum -a 256 -c SHA256SUMS.txt)
+   gh attestation verify hoku-vX.Y.Z/Hoku_X.Y.Z_aarch64.dmg --repo joao-afonso-p/hoku
+   ./scripts/verify-macos-release.sh hoku-vX.Y.Z/Hoku_X.Y.Z_aarch64.dmg --version X.Y.Z
+   # then, when the clean-machine test passes:
+   gh release edit vX.Y.Z --draft=false
+   ```
 
-# 5. Publish when the clean-machine test passes. The installer's default
-#    (releases/latest) only sees published, non-pre-release versions.
-gh release edit v0.2.0 --draft=false
-```
+   The installer's default (`releases/latest`) only sees published, non-pre-release
+   versions.
 
-**First release, v0.1.0.** All three files already say `0.1.0`, so skip step 1. After
-this workflow is merged, rehearse once (`gh workflow run release.yml --ref main`, then
-`gh run download <run-id>`), then tag `v0.1.0` on `main`.
+To preview what the workflow will do, run `node scripts/next-version.mjs` on an up-to-date
+`main`. To release a specific version instead, bump it yourself in a pull request with
+`node scripts/bump-version.mjs X.Y.Z`. Merging that pull request tags and releases it the
+same way.
 
-If a run fails, fix the cause and use *Re-run failed jobs*, or *Run workflow* from the
-tag. The draft is updated in place. If the fix needs a code change, delete the draft and
-the tag (`gh release delete v0.2.0 --cleanup-tag`) and tag the new commit. Once a
-release is published, never move or reuse its tag: release a new patch version instead.
+If a run fails, fix the cause and use *Re-run failed jobs*, or *Run workflow* on
+`release.yml` from the tag. The draft is updated in place. If the fix needs a code change,
+delete the draft and the tag (`gh release delete vX.Y.Z --cleanup-tag`) and bump to a new
+patch version. Once a release is published, never move or reuse its tag.
 
 ## Verifying a build
 

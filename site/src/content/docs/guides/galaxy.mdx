@@ -1,0 +1,75 @@
+---
+title: The Galaxy
+description: How Hoku places projects and sessions on the map, what Current and All show, how filters work, and how to move around.
+---
+
+The Galaxy is Hoku's map. Every project is a star system, and its sessions orbit it. The layout is meant to be learned: a project stays where it is, and nothing jumps around when something changes.
+
+![The Galaxy with demo data: three projects, Demo · Vega, Demo · Lyra and Demo · Orion, each with a status line such as "2 needs you · 1 error · 2 working" and a count such as "22 current · 34 total".](../../../../../docs/images/galaxy.png)
+
+## Reading the map
+
+Around each project:
+
+- **The angle shows the provider.** Each provider gets its own sector of the circle: Claude Code sessions are diamonds, Claude (Desktop) sessions are circles, Codex sessions are hexagons. Shape and label always identify the provider, never color alone.
+- **The distance shows relevance.** The closer a session sits to the project's core, the more it matters now. The rings, from the inside out:
+  - **Live**: sessions that need you (closest), then errors, working, ready and idle.
+  - **Recent · 7 days**: sessions active inside your recent window. Fresher ones sit closer.
+  - **Older** (or **Pinned** for favorites): shown only in **All**, or when favorited.
+- **Halos and rings show state.** A warm, steady halo means it **needs you**. A coral ring is an **error**. A slow breathing halo means it's **working**. A thin ring means **ready**. Idle, offline and unknown sessions are progressively quieter. See [Needs You and live status](/hoku/guides/needs-you/).
+
+Each project shows a status line ("1 needs you · 1 working") and "N current · M total".
+
+## Current and All
+
+The switch at the top left chooses what the map shows. <kbd>⌘</kbd><kbd>⇧</kbd><kbd>A</kbd> toggles it.
+
+- **Current · 7d** (the default) shows what you're working on:
+  - anything that needs you (always, whatever your settings)
+  - live sessions: working, ready, idle or failed
+  - sessions active in the last 7 days (you can pick 3, 7, 14 or 30 days in [Settings](/hoku/reference/settings/))
+  - favorites
+  - sessions in [Follow up](/hoku/guides/follow-up/).
+- **All** also shows every older session, quietly, in each project's outer ring.
+
+In a project, **+N older** in the top bar reveals that project's older sessions without switching the whole map to All. **Hide older** puts them away again.
+
+"Recent" uses the provider's own last-activity time, not when Hoku found the session. [Search](/hoku/guides/search/) always covers every session, whatever the map shows.
+
+## Filtering by status
+
+Next to the switch:
+
+- **Needs You N** and **Working N** are quick filters. They also tell you at a glance what's happening right now.
+- **Status ▾** lets you pick any combination of Needs You, Error, Working, Ready, Idle, Offline and Unknown.
+
+Filtering never moves anything. Sessions that don't match fade in place, and so do projects with no match. A summary such as "3 projects · 4 sessions need you" appears next to the filter. **Clear** or <kbd>Esc</kbd> removes it.
+
+## Moving around
+
+| To | Do |
+|---|---|
+| Zoom into a project | Click it, or press <kbd>⌘</kbd><kbd>1</kbd>–<kbd>⌘</kbd><kbd>9</kbd> for the first nine projects |
+| Go back to the whole Galaxy | Click **Galaxy** in the top bar, press <kbd>Esc</kbd>, or <kbd>⌘</kbd><kbd>0</kbd> |
+| Pan | Drag the background, or scroll with two fingers |
+| Zoom | Pinch, or hold <kbd>⌘</kbd> and scroll |
+| See a session's details | Hover it for a summary. Click it to open the inspector. |
+| Open a session in its app | Double-click it, or select it and press <kbd>↵</kbd> |
+| Step through a project's sessions | <kbd>Tab</kbd> and <kbd>⇧</kbd><kbd>Tab</kbd>, most recent first |
+| Move a session to another project | Drag it onto that project. The choice sticks, even across scans. |
+
+## Quiet, hidden and archived projects
+
+- A project with nothing current **stays where it is**, very faint, so you keep learning where each project lives. Hover it to bring it back up. **Settings → Hide inactive projects** takes such projects off the Current map without moving the others.
+- An **archived** project leaves the Galaxy completely. It keeps its place, folder and sessions, and comes back exactly where it was when you restore it. See [Archive, delete and forget](/hoku/guides/cleaning-up/).
+
+## Motion
+
+**Settings → Galaxy ambience** offers **Subtle motion** (the default: the background drifts imperceptibly and follows the cursor a little) or **Still**. Projects and sessions never drift. The runtime animations (breathing, ripples when a state changes) stay on in both modes. If you turn on *Reduce motion* in macOS, Hoku turns motion off.
+
+<details>
+<summary>How the layout stays stable</summary>
+
+Positions come from a deterministic layout seeded by each project's and session's ID, so the same data always draws the same map. Sector boundaries only move when a provider's session count crosses 1, 2, 4, 8, 16… The contributor doc [Constellation layout](https://github.com/joao-afonso-p/hoku/blob/main/docs/constellation-layout.md) has the details.
+
+</details>

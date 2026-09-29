@@ -1,0 +1,47 @@
+---
+title: Getting back to a session
+description: What Go to terminal does for Claude Code, how Codex and Claude sessions open, and what happens with VS Code, other desktops, Warp and tmux.
+---
+
+Every session has one action that takes you back to it, in the app it belongs to. Use it from the inspector, press <kbd>↵</kbd> on a selected session, double-click a session anywhere, or press <kbd>↵</kbd> on a result in <kbd>⌘</kbd><kbd>K</kbd>.
+
+## Claude Code: Go to terminal
+
+For Claude Code there's a single button, **Go to terminal**. When you click it, Hoku checks the session's live state at that moment and picks one of these:
+
+| The session is… | Hoku… |
+|---|---|
+| running in an **iTerm or Terminal** tab | switches to that tab, bringing its window to your current desktop if needed |
+| running in **VS Code**'s (or VS Code Insiders') integrated terminal | brings VS Code to the front. It can't pick the exact terminal tab, because VS Code has no way to do that from outside. |
+| running as a **background session** (`claude --bg`) | switches to a tab already attached to it, or runs `claude attach <id>` in a new tab |
+| **not running** | runs `claude --resume <id>` in the session's folder, in a new tab of your frontmost iTerm window on this desktop |
+
+It never starts a second copy of a session that's already running. Two copies of one live session would conflict.
+
+- **Terminal instead of iTerm.** **Settings → Claude Code opens in** chooses *Automatic* (iTerm if it's installed), *iTerm* or *Terminal*. Terminal gets a new window rather than a tab, because Terminal can't open tabs without Accessibility access, which Hoku doesn't ask for.
+- **The first time**, macOS asks whether Hoku may control iTerm or Terminal. Click **Allow**. macOS asks again after each Hoku update (see [Install and update](/hoku/start/install/#update)).
+- **Hover the button** to see what will most likely happen, for example "Will switch to the terminal it's running in". The click re-checks live state, so the result can differ.
+- **Copy command** in the inspector copies `claude --resume <id>` if you'd rather run it yourself.
+
+### When Hoku can't switch there
+
+- **Warp, tmux and other terminals.** Hoku can't switch to them. It tells you the session is already running in a terminal it can't switch to, instead of starting a second copy. Go to it there.
+- **Another desktop (Space).** If the session's window is on another desktop and macOS is set not to follow apps between desktops, Hoku shows how to change that. Open **System Settings → Desktop & Dock**, and under *Mission Control* turn on *When switching to an application, switch to a Space with open windows for the application*. It's the macOS default, and Hoku doesn't change it for you.
+- **The transcript is gone.** Claude Code deletes old transcripts after a while. Such sessions stay in Hoku as *Transcript no longer on disk*, drawn hollow, and can't be resumed.
+
+## Codex Desktop
+
+**Open thread in Codex** opens `codex://threads/<id>` in Codex Desktop. If Codex Desktop isn't installed, Hoku copies the thread ID to your clipboard instead.
+
+## Claude Desktop
+
+- **Cowork sessions:** **Open in Claude Cowork** opens the session in Claude Desktop.
+- **Chats:** **Open conversation in Claude** opens the chat in Claude Desktop. If Claude Desktop isn't installed, the chat opens on claude.ai in your browser.
+
+## Demo sessions
+
+Demo sessions aren't connected to anything, so their button reads *Demo session — not connected* and does nothing.
+
+## Safety
+
+Session IDs, folders and links come from other apps' files, so Hoku treats them as untrusted. IDs are checked against a strict pattern, folders must exist, paths are shell-quoted, and only known link types are opened: `claude://`, `codex://`, and `https://` links to claude.ai or chatgpt.com.

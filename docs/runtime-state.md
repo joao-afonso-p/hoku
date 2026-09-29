@@ -1,5 +1,8 @@
 # Runtime state and attention
 
+> This page covers how runtime state is derived. For what the states mean to users, see the
+> [user guide](https://joao-afonso-p.github.io/hoku/guides/needs-you/).
+
 Hoku answers one question: **what is happening across my AI work, and what needs me?**
 Every session carries a normalized, provider-agnostic runtime status. Needs You is built on
 top of it as a first-class inbox.

@@ -1,0 +1,73 @@
+---
+title: Hoku
+description: Hoku is a local-first macOS app that organizes your Claude Code, Codex and Claude Desktop sessions by project, shows what needs you, and takes you back to each session in its own app.
+template: splash
+lastUpdated: false
+editUrl: false
+hero:
+  title: Your AI work, mapped.
+  tagline: Hoku is a free macOS app that finds your Claude Code, Codex and Claude Desktop sessions on this Mac, arranges them by project, shows which ones are waiting on you, and takes you back to any of them in its own app.
+  image:
+    file: ../../../../docs/images/galaxy.png
+    alt: The Hoku Galaxy with demo data. Three projects are drawn as star systems. Their sessions orbit them as small shapes, and the ones that need attention have a warm halo. The top bar reads "Needs You 4" and "Working 3".
+  actions:
+    - text: Install Hoku
+      link: /hoku/start/install/
+      icon: right-arrow
+    - text: Take the tour
+      link: /hoku/start/tour/
+      variant: minimal
+---
+
+import { Card, CardGrid, LinkCard } from "@astrojs/starlight/components";
+
+:::note[Hoku does not replace Claude or Codex]
+It reads what those apps already keep on your Mac, read-only, and opens each session back in the app it belongs to. You keep working in Claude Code, Codex Desktop and Claude Desktop as before.
+:::
+
+## What it helps you do
+
+<CardGrid>
+  <Card title="See all your AI work in one place" icon="star">
+    Every Claude Code terminal session, Codex Desktop thread and Claude Desktop Cowork session on this Mac, grouped into projects. Claude chats can be added by link.
+  </Card>
+  <Card title="Know what is waiting on you" icon="warning">
+    Sessions asking for a permission, an answer or a sign-in go to **Needs You**. Hoku can badge the Dock and notify you once when that happens.
+  </Card>
+  <Card title="Get back in with one action" icon="rocket">
+    **Go to terminal** switches to the tab a Claude Code session is running in, or resumes it. Codex and Claude sessions open in their own apps.
+  </Card>
+  <Card title="Keep it on this Mac" icon="approve-check">
+    No account, no cloud, no analytics. Hoku never writes to the other apps' files and never reads passwords or tokens.
+  </Card>
+</CardGrid>
+
+## Install
+
+On an Apple Silicon Mac, paste this into Terminal:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/joao-afonso-p/hoku/main/scripts/install.sh | bash
+```
+
+The same command updates Hoku later. To download the DMG yourself instead, see [Install and update](/hoku/start/install/).
+
+## What Hoku doesn't do
+
+- It doesn't run models, send prompts or keep transcripts. It stores a title and a short preview per session, nothing more.
+- It doesn't sync between Macs or back anything up to a server. Your index stays on this Mac.
+- It can't see Claude Desktop chats by itself, because they live on claude.ai. You add them by pasting a link.
+- It runs on macOS only. Releases are for Apple Silicon. On an Intel Mac you can [build it from source](https://github.com/joao-afonso-p/hoku#running).
+
+## Requirements
+
+- macOS on an Apple Silicon Mac.
+- At least one of: [Claude Code](https://docs.anthropic.com/en/docs/claude-code), Codex Desktop, or Claude Desktop. Hoku finds whatever is installed.
+- iTerm or Terminal to reopen Claude Code sessions. VS Code's integrated terminal also works for sessions already running there.
+
+<CardGrid>
+  <LinkCard title="First run" description="Scan this Mac and turn folders into projects." href="/hoku/start/first-run/" />
+  <LinkCard title="How Hoku handles your data" description="What it reads, what it stores, and the one opt-in exception to 'no network'." href="/hoku/privacy/" />
+  <LinkCard title="Known limitations" description="What each provider lets Hoku see, and what it can't." href="/hoku/reference/limitations/" />
+  <LinkCard title="Source code and releases" description="Hoku is free and MIT licensed." href="https://github.com/joao-afonso-p/hoku" />
+</CardGrid>

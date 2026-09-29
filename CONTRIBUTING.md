@@ -252,7 +252,7 @@ that before you write code saves a lot of rework.
    `pnpm typecheck` flags the exhaustive `switch`es you missed.
 7. Document the investigation in `docs/provider-discovery.md` (with redacted examples)
    and the signals in `docs/runtime-state.md`, and update the Providers table in
-   `README.md`.
+   `README.md` and the provider pages of the user guide (`site/src/content/docs/providers/`).
 
 ## Validation before opening a PR
 
@@ -284,13 +284,30 @@ There are also `#[ignore]`d manual probes. They're optional and not part of CI:
   `fix: keep session titles visible next to long branch names`.
 - Keep each PR focused on one change. Explain *why*, not only what, and link the issue.
 - Update the docs (`README.md`, `docs/`) when you change behaviour, provider integrations
-  or the security model.
+  or the security model, and the [user guide](#user-guide-site) for anything users see.
 - UI changes: include a before/after screenshot **with demo data** (Settings → Load
   demo), not your real sessions.
 - Fill in the PR template checklist, including the macOS version you tested on.
 
 Releases are cut by the maintainer from `v*` tags on `main`. A GitHub Actions workflow builds
 the DMG and drafts the GitHub Release. See [docs/releasing.md](docs/releasing.md).
+
+## User guide (`site/`)
+
+The user guide at <https://joao-afonso-p.github.io/hoku/> is an Astro + Starlight site in
+`site/`, separate from the app: its own `package.json` and lockfile, and a separate
+[`docs.yml`](.github/workflows/docs.yml) workflow that builds it on pull requests and
+deploys it from `main`. [site/README.md](site/README.md) covers running it locally.
+
+- **User-facing change → user guide change, in the same PR.** A new feature gets a section
+  or page. A changed label, shortcut, default or limitation gets its text updated. Write
+  for users: what it does, how to use it, what it doesn't do.
+- **Screenshots are real and use made-up data only.** `pnpm capture` (in `site/`) takes
+  them from a debug build running against a throwaway home folder with demo or invented
+  data, and writes them to `docs/images/`. Never add mockups or screenshots of your real
+  sessions, and review every image before committing it.
+- `docs/` stays the contributor documentation. Link to it from the guide for deep dives
+  instead of copying implementation detail.
 
 ## Privacy in issues, PRs and fixtures
 

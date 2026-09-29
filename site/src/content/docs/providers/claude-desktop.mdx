@@ -1,0 +1,42 @@
+---
+title: Claude Desktop
+description: Cowork sessions are found automatically with limited live state. Chats live on claude.ai and are added by link.
+---
+
+Claude Desktop has two kinds of sessions, and Hoku handles them differently.
+
+## Cowork sessions
+
+**Found automatically.** Claude Desktop keeps a small metadata file for each Cowork session on your Mac. Hoku reads, read-only, only these fields:
+
+- title and first message
+- when it was created and last active
+- the folders you selected
+- model
+- account.
+
+It skips archived sessions.
+
+**Live state: limited.** Claude Desktop doesn't expose whether a Cowork session is working or waiting. Hoku only knows whether Claude Desktop is running and when the session's file last changed:
+
+| Last change | Hoku shows |
+|---|---|
+| under 90 seconds ago | Working (low confidence) |
+| under 30 minutes ago | Unknown |
+| longer ago | Offline (low confidence) |
+
+A Cowork session never appears in Needs You, because Hoku can't know when it's waiting on you.
+
+**Opening:** **Open in Claude Cowork** opens the session in Claude Desktop. The link Hoku uses was checked against Claude Desktop's own code and opens without warnings, but it's not a documented feature, so a future Claude Desktop version could change it.
+
+## Chats
+
+**By hand only.** Claude chats are stored on claude.ai, not on your Mac. The only local traces are browser caches next to sign-in data, and reading those wouldn't be safe or reliable, so Hoku doesn't. To track a chat, [add it by pasting its link](/hoku/guides/adding-sessions/): a `https://claude.ai/chat/…` address, a `claude://` link or the chat's ID. You give it a title, because titles are on claude.ai too.
+
+**Live state: none.** Chats are always *Unknown*.
+
+**Opening:** **Open conversation in Claude** opens the chat in Claude Desktop, or on claude.ai in your browser if Claude Desktop isn't installed.
+
+## Account
+
+Claude Desktop has no status command, so Hoku uses what `claude auth status` (from Claude Code) reports as the hint for your Claude account. Hoku never reads Claude Desktop's sign-in or configuration files.

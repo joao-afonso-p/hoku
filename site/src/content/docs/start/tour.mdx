@@ -1,0 +1,54 @@
+---
+title: A tour of Hoku
+description: The rail, the top bar, the Galaxy, a project up close, and the inspector. How Hoku's window is organized.
+---
+
+Hoku organizes your work as **projects → sessions**. A *session* is one conversation in one tool: a Claude Code terminal session, a Codex thread, a Claude Desktop Cowork session or chat. A *project* is a group of sessions, usually one code repository or folder.
+
+## The window
+
+![Hoku's window with demo data. On the left, a narrow rail of icons. At the top, a search field and Scan button. The Galaxy fills the rest, with three projects drawn as star systems.](../../../../../docs/images/galaxy.png)
+
+### The rail (left)
+
+From top to bottom:
+
+| Icon | Opens |
+|---|---|
+| **Galaxy** | The map of all your projects. |
+| **Needs You** | Sessions waiting for your permission, answer or sign-in. The amber badge counts them. See [Needs You](/hoku/guides/needs-you/). |
+| **Follow up** | Your own review-later list. The badge counts reminders that are due. See [Follow up](/hoku/guides/follow-up/). |
+| **Activity** | A timeline of what started, finished, needed you or failed. See [Activity](/hoku/guides/activity/). |
+| **Favorites** | Sessions you starred, however old. |
+| **Projects** | Every project with a short status summary, plus archived projects. |
+| **Sessions** | A sortable, filterable table of every session. |
+| **Recaps** | A shareable summary of a period of work. See [Recaps](/hoku/guides/recaps/). |
+| **Integrations** (bottom) | Which provider apps and command-line tools are installed, sign-in status, and what each source supports. |
+| **Settings** (bottom) | See [Settings](/hoku/reference/settings/). |
+
+Needs You, Follow up, Activity, Favorites and Projects open as a drawer beside the map, so you can keep browsing.
+
+### The top bar
+
+- **Search all sessions…** or <kbd>⌘</kbd><kbd>K</kbd>: find any session, project or action. See [Search with ⌘K](/hoku/guides/search/).
+- **N finished**: sessions that finished a turn since you last looked at Activity.
+- **N today · scanned …**: sessions active today and when Hoku last scanned. Click it to open Integrations.
+- **+** (<kbd>⌘</kbd><kbd>N</kbd>): [add a session by hand](/hoku/guides/adding-sessions/).
+- **Scan** (<kbd>⌘</kbd><kbd>⇧</kbd><kbd>S</kbd>): look for new sessions.
+
+## Galaxy, project and inspector
+
+There are three levels, and <kbd>Esc</kbd> always goes back one:
+
+1. **The Galaxy** shows every project as a star system, with its sessions orbiting it. See [The Galaxy](/hoku/guides/galaxy/).
+2. **A project**: click a project to zoom in. Its sessions spread out and get labels. The top bar shows the project's name, a status summary, **Resume** and **Edit**.
+3. **The inspector**: click a session to open its details on the right, with the button that takes you back to it. See [Sessions and the inspector](/hoku/guides/sessions/).
+
+![A project up close, with the inspector open on the right for a Claude Code session called "Add CSV import". The inspector shows the Go to terminal button, Copy ID, Copy command, Reveal, Favorite and Follow up, then the project, folder, branch, first prompt and a note.](../../../../../docs/images/inspector.png)
+
+Double-click a session anywhere (on the map, in a drawer, in a list) to open it directly in its own app.
+
+## Where to go next
+
+- Learn what the halos and rings mean in [Needs You and live status](/hoku/guides/needs-you/).
+- See every key in [Keyboard shortcuts](/hoku/reference/shortcuts/).

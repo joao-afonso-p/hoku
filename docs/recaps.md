@@ -1,5 +1,8 @@
 # Recaps
 
+> This page covers how recaps work inside Hoku. For how to use them, see the
+> [user guide](https://joao-afonso-p.github.io/hoku/guides/recaps/).
+
 Recaps summarise a period of AI-assisted work: what moved forward, and the activity behind
 it. You can share one as an image or as text on LinkedIn, Slack or Teams. The recap is
 built for honesty first. Everything on it is either something Hoku observed locally or

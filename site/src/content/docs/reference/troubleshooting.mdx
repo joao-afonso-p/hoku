@@ -1,0 +1,113 @@
+---
+title: Troubleshooting
+description: Fixes for common problems with installing Hoku, finding sessions, opening them, alerts and AI drafts.
+---
+
+## Installing
+
+### macOS says it can't verify Hoku
+
+That's expected for a DMG you downloaded yourself. Click **Done**, then **System Settings → Privacy & Security → Open Anyway**. See [Install and update](/hoku/start/install/#install). The install script doesn't trigger this prompt.
+
+### macOS says Hoku is "damaged"
+
+The download is incomplete or was changed. Delete it and download it again, and [check it](/hoku/start/install/#check-a-download). Don't try to work around the message.
+
+### The script says Hoku releases are built for Apple Silicon
+
+You're on an Intel Mac. [Build Hoku from source](https://github.com/joao-afonso-p/hoku#running) instead.
+
+### The script can't write to /Applications
+
+Install for your user only:
+
+```bash
+mkdir -p ~/Applications
+curl -fsSL https://raw.githubusercontent.com/joao-afonso-p/hoku/main/scripts/install.sh | bash -s -- --dir ~/Applications
+```
+
+## Finding sessions
+
+### A scan finds nothing, or says "Not found on this Mac"
+
+That source's data isn't on this Mac: you haven't used that app here, or it keeps its data somewhere else. **Integrations** shows what Hoku detected. Claude Desktop chats always say *Manual only*. [Add them by link](/hoku/guides/adding-sessions/).
+
+### A session is missing from the map
+
+- It may be older than your recent window. Switch to **All** (<kbd>⌘</kbd><kbd>⇧</kbd><kbd>A</kbd>), use **+N older** in its project, or search for it with <kbd>⌘</kbd><kbd>K</kbd>. Search covers everything.
+- A status filter may be fading it. Click **Clear**.
+- Its project may be archived. Check **Projects → Archived**.
+- You may have forgotten it. It comes back after new activity in its provider, or when you add it again by hand.
+
+### A session is in the wrong project
+
+Pick the right one under **Project** in its inspector, or drag it onto that project. To make future sessions land correctly, give the project a **Root folder**. See [Projects](/hoku/guides/projects/).
+
+### A session I forgot came back
+
+It had new activity in its provider after you forgot it, so the next scan added it again as a fresh entry. See [Will it come back?](/hoku/guides/cleaning-up/#will-it-come-back)
+
+## Opening sessions
+
+### "macOS blocked Hoku from controlling iTerm" (or Terminal)
+
+Open **System Settings → Privacy & Security → Automation**, find **Hoku**, and turn on iTerm or Terminal. After an update, Hoku may appear as a new entry. Turn on the new one.
+
+### Hoku says the session is on another desktop
+
+macOS is set not to follow apps between desktops. Open **System Settings → Desktop & Dock**, and under *Mission Control* turn on *When switching to an application, switch to a Space with open windows for the application*. Hoku shows this setting's current state, and it updates when you come back to Hoku.
+
+### "This session is already running in a terminal Hoku can't switch to"
+
+It's running in Warp, tmux or another terminal Hoku can't control. Go to it there. Hoku won't start a second copy of a live session.
+
+### VS Code comes forward, but not the right terminal
+
+VS Code has no way for other apps to select a terminal tab. Hoku brings VS Code forward, and you pick the tab.
+
+### "Transcript no longer on disk"
+
+Claude Code deleted that transcript, so the session can't be resumed. Its entry, notes and history stay in Hoku.
+
+### Nothing happens for a Codex or Claude session
+
+- **Codex:** if Codex Desktop isn't installed, Hoku copies the thread ID instead of opening it.
+- **Claude chats** open on claude.ai in your browser if Claude Desktop isn't installed.
+- If the link no longer works, the conversation may have been deleted in the provider.
+
+## Status and alerts
+
+### A session shows the wrong state
+
+- A state marked **Likely:** or *inferred* is Hoku's best guess from local files. See the [provider pages](/hoku/providers/) for what each one can report.
+- Switch back to Hoku: it re-checks immediately when its window comes forward.
+- Cowork and chat sessions can't report most states, by design.
+
+### No notifications arrive
+
+- Make sure **Settings → Needs You alerts → Notify me when a session needs me** is on.
+- Hoku must be **running**. And while its window is in front, it doesn't notify, because you can already see it.
+- Check **System Settings → Notifications → Hoku**, and your Focus mode.
+- Notifications are only for real blocks: a permission, a question, a sign-in. Finished (Ready) sessions and ordinary errors don't notify.
+
+### The Dock icon shows no number
+
+Check that **Show the Needs You count on the Dock icon** is on, and that *Badge application icon* is on for Hoku in **System Settings → Notifications**.
+
+## AI drafts
+
+### I can't turn on AI drafts
+
+Settings says why under the switch:
+
+- **Claude Code CLI not found:** install [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
+- **Too old:** update it.
+- **Signed out:** run `claude auth login` in a terminal.
+
+### A draft fails
+
+Read the message. If Claude Code isn't signed in, run `claude auth login`, then **Retry**. Drafts stop after two minutes. **Review again** rebuilds the preview.
+
+## Still stuck?
+
+[Open an issue](https://github.com/joao-afonso-p/hoku/issues/new/choose) with your macOS version, Hoku version (bottom of Settings) and what you expected. Please leave out real session titles, prompts, emails, IDs and paths that contain your username.

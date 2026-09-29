@@ -1,0 +1,52 @@
+---
+title: Codex Desktop
+description: How Hoku finds Codex threads, infers when they're waiting for approval, and opens them in Codex Desktop.
+---
+
+## Finding threads
+
+Hoku reads Codex's thread index (`~/.codex/state_*.sqlite`), strictly read-only, and indexes each thread's title, first message preview, folder, branch, model and token count.
+
+It skips threads that would clutter the map:
+
+- archived threads
+- automation runs
+- sub-agent threads.
+
+**Projects you created in Codex** become project suggestions after a scan, with their folders.
+
+## Live state: partial
+
+For threads that are open, or were updated in the last 12 hours, Hoku reads the end of the thread's log, in memory only:
+
+| Codex recorded | Hoku shows |
+|---|---|
+| a turn started | Working |
+| a turn completed | Ready |
+| a turn was aborted | Idle |
+| an error | Error |
+| Codex isn't running | Offline |
+
+**Approvals are inferred.** Codex doesn't write approval *requests* to its logs. The only trace is a command that has no result yet. So Hoku infers them, and marks them as inferred (**Likely:** in lists):
+
+- A pending question to you shows as **Asked a question**.
+- A pending permission request shows as **Permission requested**.
+- A command that asked for elevated permissions, or any command under the `untrusted` approval policy, still unanswered after 4 seconds, shows as **Waiting for approval**.
+
+Nothing is reported under the `never` approval policy, because Codex doesn't ask.
+
+**Known gaps.** Some approvals leave no trace Hoku can see, and still show as Working:
+
+- a file patch outside the writable folders
+- MCP tool approvals
+- commands Codex itself classes as dangerous.
+
+An approved command that runs for a long time keeps showing *Waiting for approval* until its output arrives, because approval and execution look the same in the log.
+
+## Opening a thread
+
+**Open thread in Codex** opens `codex://threads/<id>`, which takes Codex Desktop straight to the thread. If Codex Desktop isn't installed, Hoku copies the thread ID instead.
+
+## Account
+
+`codex login status` only reports how you signed in (for example "Logged in using ChatGPT"). The account's email is only in Codex's credential file, which Hoku never opens, so the account shows as *Connected externally*. You can give it your own label under **Integrations → Manage accounts**.

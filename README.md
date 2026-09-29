@@ -2,26 +2,21 @@
 
 **Your AI work, mapped.**
 
-A local macOS cockpit for AI work that's scattered across Claude Code terminals, Codex
-Desktop threads and Claude Desktop conversations. It organizes them as **projects → sessions**
-on a constellation map, finds any of them with ⌘K, and takes you back to the exact
-conversation in its native tool.
+A local macOS app for AI work that's scattered across Claude Code terminals, Codex Desktop
+threads and Claude Desktop conversations. It organizes them as **projects → sessions** on a
+constellation map, shows what's waiting on you, finds any session with ⌘K, and takes you back
+to the exact conversation in its own app.
 
-![Hoku Galaxy view](docs/images/galaxy.png)
+**📖 User guide: <https://joao-afonso-p.github.io/hoku/>**
 
-Hoku keeps your AI work spatial and calm: projects remain familiar on the Galaxy while
-sessions, runtime state and attention flow stay searchable and manageable.
+![Hoku Galaxy view with demo data](docs/images/galaxy.png)
 
 > **Hoku does not replace Claude or Codex. It indexes and launches sessions in
 > their native tools.**
 
-![Hoku Sessions view](docs/images/sessions.png)
-
-![Hoku Project Resume with demo data](docs/images/resume.png)
-
-**Platform:** macOS only (developed on Apple Silicon). Linux and Windows are not supported:
-opening sessions relies on AppleScript, iTerm/Terminal and macOS app bundles. Hoku is pre-1.0.
-Releases are built for Apple Silicon Macs; on an Intel Mac, [build it from source](#running).
+**Platform:** macOS only. Releases are built for Apple Silicon Macs; on an Intel Mac,
+[build it from source](#running). Linux and Windows are not supported: opening sessions relies
+on AppleScript, iTerm/Terminal and macOS app bundles. Hoku is pre-1.0.
 
 ## Installing
 
@@ -37,120 +32,74 @@ The [script](scripts/install.sh) downloads the latest DMG, checks its SHA-256, i
 `/Applications/Hoku.app` (quitting and replacing an older copy), and opens it. Your index in
 `~/Library/Application Support/com.hoku.app` is never touched.
 
-**To update,** run the same command again whenever a new version is released. If Hoku is
-running, the script quits it, swaps in the new version and reopens it.
+**To update,** run the same command again whenever a new version is released.
 
-**Options** go after `bash -s --`, for example:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/joao-afonso-p/hoku/main/scripts/install.sh | bash -s -- --version v0.1.0
-```
+**Options** go after `bash -s --`, for example `| bash -s -- --version v0.2.0`:
 
 | Option | Effect |
 |---|---|
 | `--version vX.Y.Z` | Install that release instead of the latest |
 | `--dir ~/Applications` | Install for your user only, if you can't write to `/Applications` (the folder must exist) |
+| `--dmg FILE` | Install a DMG you already downloaded (checked against a `SHA256SUMS.txt` next to it) |
 | `--no-open` | Don't open Hoku after installing |
 
 **Or by hand:** download `Hoku_<version>_aarch64.dmg` from the latest release, open it, and drag
 Hoku to Applications. Hoku is free and isn't notarized by Apple, so the first time you open it
-macOS says it can't verify it. Click **Done**, then go to **System Settings → Privacy & Security**
-and click **Open Anyway**. You do this once per version.
+you approve it once in **System Settings → Privacy & Security → Open Anyway**. The
+[install guide](https://joao-afonso-p.github.io/hoku/start/install/) walks through it, and
+covers verifying a download and what changes on update.
 
-To update by hand, quit Hoku and drag the new version over the old one. After an update macOS
-may ask once more for permission to control iTerm or Terminal. See
-[docs/releasing.md](docs/releasing.md) for what the release builds are and how to verify a
-download.
+## What it does
+
+- **Galaxy.** Every project is a star system and its sessions orbit it: angle = provider,
+  distance = relevance, halo = state. [Guide](https://joao-afonso-p.github.io/hoku/guides/galaxy/)
+- **Live status and Needs You.** Every session is *working*, *needs you*, *ready*, *idle*,
+  *offline*, *error* or *unknown*, with an honest confidence. Needs You is the inbox for
+  permissions, questions and sign-ins, with an optional Dock badge and notifications.
+  [Guide](https://joao-afonso-p.github.io/hoku/guides/needs-you/)
+- **Go to terminal.** One action takes you back: it switches to the iTerm/Terminal tab (or VS
+  Code) a Claude Code session runs in, attaches, or resumes it. Codex and Claude sessions open
+  in their apps. [Guide](https://joao-afonso-p.github.io/hoku/guides/opening-sessions/)
+- **⌘K** searches every session, project and action.
+  [Guide](https://joao-afonso-p.github.io/hoku/guides/search/)
+- **Follow up**, your own review-later queue with reminders.
+  [Guide](https://joao-afonso-p.github.io/hoku/guides/follow-up/)
+- **Project Resume**: where to continue, what needs a decision, what changed, with optional AI
+  drafts through your Claude Code CLI. [Guide](https://joao-afonso-p.github.io/hoku/guides/resume/)
+- **Recaps**: a public-safe, shareable summary of a period, with outcomes you write.
+  [Guide](https://joao-afonso-p.github.io/hoku/guides/recaps/)
+- **Activity**, **Sessions**, **Favorites**, **Projects**, manual add for Claude chats, and
+  **Forget** to drop a session from Hoku without touching the provider's copy.
+
+![A project up close with the inspector open, invented data](docs/images/inspector.png)
 
 ## Local-first
 
-- No account, no cloud, no backend, no analytics, no telemetry. Hoku makes no network
-  requests itself. For account status it runs the providers' own CLIs (`claude auth status`,
+- No account, no cloud, no backend, no analytics, no telemetry. Hoku makes no network requests
+  itself. For account status it runs the providers' own CLIs (`claude auth status`,
   `codex login status`), which may contact their own servers.
-- One opt-in exception: **AI drafts** for Project Resume (off by default, see below). When
-  you turn them on *and* click **Generate draft**, Hoku hands a short text you can inspect
-  first to your installed Claude Code CLI, which sends it to Claude with its own sign-in.
-- Claude and Codex data is **read** from this Mac, strictly read-only. Their files and
-  databases are never modified.
-- No passwords or tokens are read or stored. Sign-in stays with each provider's own app.
-- Full transcripts are never indexed. Per session Hoku keeps the title, a short
-  (≤200 character) first-prompt preview, a short runtime detail (such as the question a
-  session is waiting on), and metadata: working directory, file paths, branch, PR link,
-  model and token count. Account labels can include the email `claude auth status` reports.
-- The index lives in `~/Library/Application Support/com.hoku.app/hub.sqlite`, on this Mac only.
-- Sharing a recap is always something you do: Hoku copies the image or text to the clipboard,
-  or saves a PNG to `~/Downloads`, and never posts or uploads anything.
+- Claude and Codex data is **read** from this Mac, strictly read-only. No passwords or tokens
+  are read or stored. Full transcripts are never indexed: a title, a ≤200-character preview,
+  a short runtime detail and metadata per session.
+- One opt-in exception: **AI drafts** in Project Resume, off by default, sent only when you
+  click **Generate draft**, with a payload you inspect first.
+- Everything lives in `~/Library/Application Support/com.hoku.app/hub.sqlite`, on this Mac.
 
-## Using it
-
-| | |
-|---|---|
-| **Galaxy** | Every project is a star system. Sessions orbit it: angle = provider, distance = relevance (needs you → working → ready → recent → older). A warm halo means it needs you, a breathing one that it's working. |
-| **Runtime state** | Every session is *working*, *needs input*, *ready*, *idle*, *offline*, *error* or *unknown*, with a confidence level. See [docs/runtime-state.md](docs/runtime-state.md). |
-| **Needs You** (badge) | The inbox for sessions waiting on you: permissions, questions, confirmations, auth failures. Oldest wait first. Finished sessions are *Ready* and never land here. |
-| **Needs You alerts** | *Settings → Needs You alerts*. The Dock icon shows how many sessions need you (on by default). Optionally, a macOS notification when a session starts needing you, and one Dock bounce (both off by default). Alerts come only while Hoku runs and isn't in front, name only the project and the kind of request, and clicking one shows that session in Hoku without opening anything. See [docs/runtime-state.md](docs/runtime-state.md#notifications-and-the-dock). |
-| **Follow up** (⚑, `F`) | Your own review-later queue, separate from Needs You. Put a finished session there from its inspector, an Activity row, the Sessions table or ⌘K (`⌘F`), or select it and press `F`. Optionally set a reminder (in 3 hours, tomorrow at 9, next Monday, or a date) or snooze it. The queue groups by date (Due · No date · Scheduled) or by project; overdue reminders show in coral and the rail badge counts what's due. `F` or **Done** clears it, with Undo. Nothing lands here on its own, and scans never reset it. Reminders are in-app only for now: no macOS notifications. |
-| **Status filters** | Galaxy quick filters `Needs You` / `Working` plus a multi-select `Status ▾`. Non-matching sessions fade in place, so nothing moves. |
-| **Current \| All** (⌘⇧A) | **Current** (default) shows what you're working on: live sessions, favorites, sessions in Follow up, and anything active in the last 7 days (3/7/14/30 in Settings). **All** shows the full archive. Each project shows "N current · M total". |
-| **+N older** | In a project, temporarily reveal its older sessions without switching to All. |
-| **Project Focus** | Click a project to zoom in. Hover for metadata, click to inspect, double-click to open. |
-| **Inactive projects** | Stay on the map, very faint, so their place stays familiar. *Settings → Hide inactive projects* removes them without moving the others. |
-| **Archive a project** | From its edit sheet or the Projects drawer. It leaves the Galaxy, keeps its sessions, root and position, and stays searchable. Restore it from Projects → Archived. *Delete* instead removes the project and moves its sessions to Unsorted. |
-| **Go to terminal** | The one action for Claude Code. At click time Hoku checks live state and switches to the tab it's running in (or to VS Code, when it runs in VS Code's terminal), attaches to a background session, or resumes it in a new tab of your frontmost iTerm window. It never starts a second copy of a live session. |
-| **Galaxy ambience** | *Settings → Galaxy ambience*: `Subtle motion` (default: the background drifts imperceptibly and follows the cursor a little) or `Still`. Runtime animations are separate and always shown, unless macOS reduced motion is on. |
-| **⌘K** | Search **all** sessions (including ones hidden from Current or by a filter), projects and actions. `↵` opens, `⌘↵` shows on map, `⌥↵` filters the Galaxy to its state, `⌘P` goes to its project, `⌘D` favorites, `⌘F` follows up, `⌘C` copies the ID. |
-| **Resume** (`R` in a project) | A return-to-work view for the focused project: your description and next step (both editable), **Continue here** (the session to open first, with why), what **needs a decision**, recent sessions with state, branch, PR and notes, and **what changed** in the last 7 days. *Ready* means an agent finished its turn, not that the task is done; inferred states are marked. Also from the project header, the Projects drawer and ⌘K. |
-| **AI drafts** (optional) | *Settings → AI drafts* lets Claude draft a project's description and next step through the installed Claude Code CLI. Off by default and never automatic. Before each draft you see the exact text that will be sent: project name, your description, next step and session notes, session titles and states, branch names, PR numbers and recent events. No transcripts, prompts, tool output, file contents, paths, links, emails, accounts or session IDs, and paths, links, emails and token-like strings are replaced before sending. The CLI runs once with every tool disabled, your customizations off (`--safe-mode`) and no saved session (`--no-session-persistence`). Hoku never reads credentials. The draft is saved only when you accept it. |
-| **Activity** | Cross-provider timeline of what started, finished, needed you or failed (Today / 7d / 30d). |
-| **Sessions** | The management table: search, sort, filter by project, provider, status, account, favorite, follow up, recency. |
-| **Recaps** | A shareable recap of a period (today, 7, 30 or 90 days) and some or all projects. Shows observed activity (active projects, sessions, days, provider mix, linked PRs) with its coverage, next to outcomes *you* write (each one goes on the card only when you tick it). Export a share card as a PNG or copy it, plus LinkedIn or Slack/Teams text. Public-safe by default: no account names, titles, IDs, paths, prompts, notes, PR links or unnamed projects. See [docs/recaps.md](docs/recaps.md). |
-| **Favorites / Projects** | Left rail drawers. Projects show compact runtime summaries ("1 needs you · 2 working"). |
-| **Scan** (⌘⇧S) | Discovers Claude Code, Codex and Cowork sessions and suggests projects from their folders. |
-| **Add session** (⌘N) | Paste a Claude link, a Codex thread ID or a Claude Code session ID. |
-| Drag a session onto a project in the galaxy | Reassign it. |
-| `Tab` / `⇧Tab`, `↵`, `F`, `Esc`, `⌘1–9`, `⌘0` | Cycle sessions, open, follow up (or mark done), back out, jump to project, galaxy. |
-
-![Follow up queue and inspector, with demo data](docs/images/follow-up.png)
+Details: [How Hoku handles your data](https://joao-afonso-p.github.io/hoku/privacy/).
 
 ## Providers
 
 | Provider | Discovery | Live state | Opening |
 |---|---|---|---|
-| **Claude Code** | Transcripts in `~/.claude/projects` plus the live-session registry `~/.claude/sessions` | **Full**: the registry's own busy / waiting (permission, question, dialog) / idle, plus transcript tail | **Go to terminal**, decided live. Running in a terminal → **switches to that iTerm/Terminal tab** (bringing its window to this desktop if needed). Running in VS Code (or VS Code Insiders) → **brings VS Code forward**. Background → switches to a tab already attached, or `claude attach <id>` in a new tab. Otherwise → `claude --resume <id>` in the session's folder, in a new tab of the frontmost iTerm window on this desktop. Terminal.app gets a window, since it can't open tabs without Accessibility access. |
-| **Codex Desktop** | Thread index `~/.codex/state_*.sqlite` (read-only). Archived threads, automation runs and sub-agents are skipped. Codex projects become project suggestions. | **Partial**: inferred from rollouts; approvals from pending escalated commands | `codex://threads/<id>`, verified against Codex's own logs |
-| **Claude Desktop, Cowork** | Local session metadata in `~/Library/Application Support/Claude/local-agent-mode-sessions` | **Limited**: app running + metadata changes only | `claude://claude.ai/local_sessions/<id>` |
-| **Claude Desktop, chats** | **Manual only.** Chats are stored server-side, and scraping the app's cache isn't safe. | **None** | `claude://claude.ai/chat/<uuid>`. Paste the web URL, a `claude://` link or a bare ID. |
+| **Claude Code** | Transcripts in `~/.claude/projects` + the live-session registry | **Full** | Go to terminal: switch to its tab, attach, or `claude --resume` |
+| **Codex Desktop** | Thread index `~/.codex/state_*.sqlite` (read-only) | **Partial**, approvals inferred | `codex://threads/<id>` |
+| **Claude Desktop, Cowork** | Local session metadata | **Limited** | `claude://claude.ai/local_sessions/<id>` |
+| **Claude Desktop, chats** | **Manual only** (chats live on claude.ai) | **None** | `claude://claude.ai/chat/<uuid>` |
 
-Account state comes from `claude auth status` (email, org, plan) and `codex login status`
-(sign-in mode). Neither prints secrets. Details, schemas and verification steps are in
-[docs/provider-discovery.md](docs/provider-discovery.md).
-
-### Known limitations
-
-- Claude chat titles and contents are server-side, so chats are added by link and titled by you.
-- Claude Code prunes old transcripts. Those sessions stay in the index marked "no longer on
-  disk", and resume is disabled for them.
-- Focusing a running Claude Code terminal needs macOS Automation permission for iTerm or
-  Terminal (asked once).
-- In VS Code, Hoku brings VS Code forward but can't select the exact integrated-terminal tab
-  or window: VS Code has no API for that outside the app. Warp, tmux and other hosts aren't
-  switched to at all; Hoku says where the session runs instead of starting a second copy.
-- A Codex account's email isn't readable without opening its credential file, which the app
-  doesn't do. The Codex account shows as "Connected externally".
-- Follow up reminders are shown inside Hoku only (rail badge, queue, inspector). There are no
-  macOS notifications yet. Forgetting a session in Hoku also removes its follow-up; if new
-  activity brings it back on a later scan, it returns without one.
-- One root folder per project. Sessions elsewhere can be dragged in or reassigned by hand,
-  and that choice sticks.
-- The Cowork deep link is verified in Claude Desktop's code and accepted without warnings,
-  but it's an undocumented route.
-- Codex doesn't persist approval *requests*. Hoku infers them from calls still pending
-  (escalated commands, permission requests, questions, any command under `untrusted`), and
-  marks them as inferred. See docs/runtime-state.md. Cowork and Claude chats expose no turn state, so they
-  never appear in Needs You.
-- Needs You notifications are posted by Hoku itself, so they only arrive while Hoku is
-  running. They follow macOS permission, Focus and notification settings, and aren't
-  available in unbundled `pnpm tauri dev` builds.
+Per-provider details and limits are in the guide's
+[provider pages](https://joao-afonso-p.github.io/hoku/providers/) and
+[known limitations](https://joao-afonso-p.github.io/hoku/reference/limitations/). The
+investigation behind each integration is in [docs/provider-discovery.md](docs/provider-discovery.md).
 
 ## Running
 
@@ -217,8 +166,9 @@ UI. The app is named **Hoku** everywhere: `productName`, the `Hoku` executable
   stability guarantees
 - [docs/provider-discovery.md](docs/provider-discovery.md): where each provider stores its data
   and why each integration works the way it does
-- [docs/releasing.md](docs/releasing.md): how releases are built, installed, verified and
-  tested on a clean machine
+- [docs/releasing.md](docs/releasing.md): how versions and releases are cut (automatically,
+  after merges), built, installed, verified and tested on a clean machine
+- [site/](site/README.md): the user guide published at <https://joao-afonso-p.github.io/hoku/>
 
 ## Contributing
 

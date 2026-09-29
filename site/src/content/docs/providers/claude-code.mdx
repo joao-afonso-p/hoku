@@ -1,0 +1,46 @@
+---
+title: Claude Code
+description: How Hoku finds Claude Code sessions, reads their live state, and takes you back to them in iTerm, Terminal or VS Code.
+---
+
+Claude Code is the provider Hoku can see best.
+
+## Finding sessions
+
+Hoku reads Claude Code's transcripts in `~/.claude/projects`, read-only, and keeps only:
+
+- **the title**, in this order: the name you gave the session (`/rename` or `--name`), its agent name, Claude Code's own title, or the first real prompt
+- **a preview** of the first prompt, up to 200 characters
+- **the details** Claude Code records: folder, Git branch, a linked pull request, the model.
+
+Transcripts themselves are never copied into Hoku.
+
+While Hoku is running, it also notices **new** Claude Code sessions on its own, within seconds, from Claude Code's live-session registry in `~/.claude/sessions`. You don't need to rescan for those.
+
+## Live state: full
+
+Claude Code keeps a small file per running session saying whether it's busy, waiting or idle, and, when waiting, on what: a permission prompt, input, a dialog, a sandbox request. Hoku reads that and checks that the process is still alive. So these states are reported by Claude Code itself, with high confidence.
+
+Hoku also reads the last part of the transcript, in memory only, to name what's happening:
+
+- the tool that's running or waiting, such as *Running Bash* or *Waiting for permission · Bash*
+- a question Claude asked, which Hoku shows as *Asked a question* with the question
+- a plan that needs approval
+- errors: *Authentication required* (needs you), *Usage limit reached*, *Request failed*.
+
+Hoku doesn't install Claude Code hooks. Hooks would mean changing your `~/.claude/settings.json`, and Hoku never writes to provider files.
+
+## Getting back to a session
+
+**Go to terminal** decides at click time: switch to the tab it's running in, bring VS Code forward, attach to a background session, or resume it with `claude --resume` in a new iTerm tab or Terminal window. See [Getting back to a session](/hoku/guides/opening-sessions/#claude-code-go-to-terminal).
+
+## Account
+
+**Integrations** shows the email, organization and plan that `claude auth status` reports. Hoku never opens Claude Code's credential files.
+
+## Limitations
+
+- **Old transcripts disappear.** Claude Code deletes transcripts after a while (its `cleanupPeriodDays` setting). Hoku keeps those sessions, marked *Transcript no longer on disk* and drawn hollow, but they can't be resumed.
+- **Only iTerm, Terminal and VS Code can be switched to.** Hoku brings VS Code forward but can't pick the exact terminal tab or window. Sessions in Warp, tmux or other terminals aren't switched to. Hoku tells you where the session runs instead of starting a second copy.
+- **Switching tabs needs macOS Automation permission** for iTerm or Terminal, asked once per Hoku version.
+- **VS Code forks** (Cursor, VSCodium, Windsurf) aren't recognized.

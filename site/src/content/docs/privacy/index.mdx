@@ -1,0 +1,75 @@
+---
+title: How Hoku handles your data
+description: Exactly what Hoku reads, what it stores, what it never touches, and the single opt-in feature that sends anything over the network.
+---
+
+Hoku is local-first: it runs entirely on your Mac and has no server behind it. This page is specific on purpose. Every point below is enforced in Hoku's code and in the [rules every contribution must follow](https://github.com/joao-afonso-p/hoku/blob/main/CONTRIBUTING.md#non-negotiable-rules).
+
+## In short
+
+- No account, no cloud, no backend, no analytics, no telemetry, no crash reporting.
+- Other apps' data is only ever **read**, never changed.
+- Hoku never reads passwords, tokens or credential files.
+- It stores a title and a short preview per session, never whole conversations.
+- Nothing leaves your Mac unless you click **Generate draft** in [Resume](/hoku/guides/resume/#ai-drafts-optional), or share a recap yourself.
+
+## What Hoku reads
+
+| From | What | How |
+|---|---|---|
+| `~/.claude/projects` | Claude Code transcripts | Read-only. The last part of a transcript is read into memory to work out live state, then discarded. |
+| `~/.claude/sessions` | Claude Code's list of running sessions | Read-only. The secret key files next to it are never opened. |
+| `~/.codex/state_*.sqlite` | The Codex thread index | Opened read-only, and SQLite is told to refuse writes. |
+| `~/.codex/sessions/…` | The end of recent Codex thread logs | Read-only, in memory, for live state. |
+| `~/Library/Application Support/Claude/local-agent-mode-sessions` | Claude Desktop Cowork metadata | Read-only, named fields only. |
+| The process list | Which provider apps and sessions are running | Read-only. |
+
+Hoku never creates, modifies, moves, locks or deletes anything in those places. It doesn't install hooks or change any provider's settings.
+
+**Never opened:** `~/.codex/auth.json`, Claude Code's session key and daemon auth files, Claude Desktop's sign-in and configuration caches, or any other credential file, not even to read one "harmless" field.
+
+**Account status** comes only from the providers' own status commands, `claude auth status` and `codex login status`, and Hoku keeps only their non-secret fields. For Claude that can include your account email, organization and plan. Those commands belong to the providers and may contact their servers when they run.
+
+## What Hoku stores
+
+Everything Hoku stores is in one file on your Mac: `~/Library/Application Support/com.hoku.app/hub.sqlite`. See [Your data](/hoku/privacy/your-data/).
+
+Per session:
+
+- a title (up to 64 characters)
+- a preview of the first prompt (up to 200 characters)
+- a short live-state detail, such as the question a session is waiting on (up to 160 characters)
+- metadata: folder, repository, branch, pull request link, model, token count (Codex), provider ID and link
+- the state history for [Activity](/hoku/guides/activity/), kept 90 days.
+
+And what you add yourself: projects, notes, favorites, follow-ups and reminders, related-session links, account labels, Resume descriptions and next steps, recap outcomes, and your settings. For sessions you [forget](/hoku/guides/cleaning-up/#forget-a-session), Hoku keeps only a small marker: provider, ID and two timestamps.
+
+**Never stored:** full transcripts, prompts beyond the 200-character preview, tool output, file contents, system prompts, passwords or tokens.
+
+## Network
+
+Hoku makes no network requests of its own. Its interface can't load anything from the internet: its content security policy allows only its own files. The only outside programs it runs are macOS tools, the providers' own command-line tools (to read their version and sign-in status, and for AI drafts if you use them), and the terminal commands you trigger with **Go to terminal**.
+
+### The one exception: AI drafts
+
+[AI drafts](/hoku/guides/resume/#ai-drafts-optional) in Project Resume send a short text to Claude through **your** installed Claude Code CLI. The feature is:
+
+- **off by default** and turned on only in Settings, after Hoku shows you what drafts send
+- **never automatic**: nothing is sent until you click **Generate draft**
+- **inspectable**: you see the exact text before each draft, with paths, links, emails and token-like strings already replaced
+- **minimal**: no transcripts, prompts, tool output, file contents, paths, links, emails, account details or session IDs
+- **isolated**: one request, every tool disabled, your Claude customizations off, no saved session. Hoku never reads the CLI's credentials.
+
+## Sharing
+
+[Recaps](/hoku/guides/recaps/) are shared only by you: Hoku copies an image or text to your clipboard, or saves a PNG to your Downloads folder. It never posts or uploads anything. Cards are public-safe by default: no titles, IDs, paths, prompts, notes, accounts or unnamed projects.
+
+[Needs You notifications](/hoku/guides/needs-you/#alerts-and-the-dock) show only a project name and the kind of request, because they can appear on your lock screen.
+
+## This website
+
+This documentation is hosted on GitHub Pages. It sets no cookies and has no analytics or third-party scripts, and search runs entirely in your browser. GitHub may log visits as described in the [GitHub Privacy Statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement).
+
+## Reporting a problem
+
+If you think Hoku handles data in a way that contradicts this page, please [report it privately](https://github.com/joao-afonso-p/hoku/security/advisories/new). When filing any issue, leave out real session titles, prompts, emails, IDs and paths with your username.
