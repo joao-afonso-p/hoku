@@ -125,7 +125,7 @@ function Suggestions({ suggestions }: { suggestions: ProjectSuggestion[] }) {
       <div className="mt-2 max-h-[240px] space-y-0.5 overflow-y-auto">
         {suggestions.map((s) => (
           <label key={s.rootPath} className="flex items-center gap-3 rounded-[7px] px-1.5 py-1.5 hover:bg-white/[0.03]">
-            <input type="checkbox" className="accent-[#f1ead8]" checked={picked.has(s.rootPath)} onChange={() => toggle(s.rootPath)} />
+            <input type="checkbox" checked={picked.has(s.rootPath)} onChange={() => toggle(s.rootPath)} />
             <input
               className="w-40 rounded bg-transparent text-[12.5px] text-ink outline-none focus:bg-white/[0.04]"
               value={names[s.rootPath] ?? s.name}
