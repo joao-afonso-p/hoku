@@ -1,6 +1,6 @@
 [package]
 name = "ai-session-hub"
-version = "0.2.0"
+version = "0.2.1"
 description = "Hoku: a local-first macOS app that indexes Claude Code, Codex, and Claude Desktop sessions read-only"
 authors = ["João Afonso"]
 license = "MIT"
