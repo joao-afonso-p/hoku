@@ -13,7 +13,7 @@ For Claude Code there's a single button, **Go to terminal**. When you click it, 
 |---|---|
 | running in an **iTerm or Terminal** tab | switches to that tab, bringing its window to your current desktop if needed |
 | running in **VS Code**'s (or VS Code Insiders') integrated terminal | brings VS Code to the front. It can't pick the exact terminal tab, because VS Code has no way to do that from outside. |
-| running as a **background session** (`claude --bg`) | switches to a tab already attached to it, or runs `claude attach <id>` in a new tab |
+| running as a **background session** (`claude --bg`) | switches to a tab already attached to it. Otherwise, if `claude agents` is open (in iTerm, Terminal or VS Code), it goes there so you can pick the session. Failing both, it runs `claude attach <id>` in a new tab. |
 | **not running** | runs `claude --resume <id>` in the session's folder, in a new tab of your frontmost iTerm window on this desktop |
 
 It never starts a second copy of a session that's already running. Two copies of one live session would conflict.

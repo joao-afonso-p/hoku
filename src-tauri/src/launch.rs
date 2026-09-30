@@ -376,6 +376,41 @@ pub fn find_attached(ps: &str, job: &str) -> Option<(i64, String)> {
     })
 }
 
+/// The newest `claude agents` dashboard open in a terminal tab: its pid and tty. It lists every
+/// background session and opens them in place, but its arguments don't say which one it shows.
+pub fn agents_dashboard() -> Option<(i64, String)> {
+    let out = run(Command::new("/bin/ps").args(["-axo", "pid=,etime=,tty=,command="])).ok()?;
+    find_agents_dashboard(&out)
+}
+
+pub fn find_agents_dashboard(ps: &str) -> Option<(i64, String)> {
+    ps.lines()
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            let pid: i64 = parts.next()?.parse().ok()?;
+            let age = elapsed_secs(parts.next()?)?;
+            let tty = parts.next()?;
+            let exe = parts.next()?;
+            let is_claude = exe.ends_with("claude") || exe.contains("/claude/versions/");
+            (is_claude && parts.next() == Some("agents") && tty != "??")
+                .then(|| (age, pid, format!("/dev/{tty}")))
+        })
+        .min_by_key(|(age, _, _)| *age)
+        .map(|(_, pid, tty)| (pid, tty))
+}
+
+/// `ps -o etime=`: `[[dd-]hh:]mm:ss`, in seconds.
+fn elapsed_secs(etime: &str) -> Option<u64> {
+    let (days, clock) = match etime.split_once('-') {
+        Some((d, rest)) => (d.parse::<u64>().ok()?, rest),
+        None => (0, etime),
+    };
+    let secs = clock
+        .split(':')
+        .try_fold(0u64, |acc, part| Some(acc * 60 + part.parse::<u64>().ok()?))?;
+    Some(days * 86_400 + secs)
+}
+
 /// Which host app an executable belongs to, from its `ps -o comm=` (the full executable path
 /// on macOS). VS Code is recognised only by its own bundle or its `Code Helper` processes, so
 /// other Electron apps and VS Code forks (Cursor, VSCodium, Windsurf…) never match.
@@ -623,32 +658,49 @@ fn bring_window_here(app: TerminalApp, window_id: i64) -> Result<(), String> {
     osascript(&script).map(|_| ())
 }
 
+/// What "Go to terminal" found showing a live session: the session itself (or a tab attached to
+/// it), or a `claude agents` dashboard, where the user still has to pick the session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Shown {
+    Session,
+    Dashboard,
+}
+
 /// Go to a session in a host without scriptable terminal tabs (VS Code): the caller activates
 /// the app, which brings its windows forward. Nothing is started.
-fn focus_host_app(host: HostApp, ctx: &LaunchContext) -> OpenResult {
+fn focus_host_app(host: HostApp, shown: Shown, ctx: &LaunchContext) -> OpenResult {
     let elsewhere = !ctx.hoku_fullscreen
         && !spaces_switch_on_activate()
         && !app_window_on_current_space(host.bundle_id());
-    host_app_result(host, elsewhere)
+    host_app_result(host, shown, elsewhere)
 }
 
 /// VS Code exposes no API to select one of its integrated-terminal tabs from outside the app,
 /// so the message says where to look. `elsewhere`: its windows are on another desktop and macOS
 /// won't switch there on activation; they can't be moved here without Accessibility access.
-pub fn host_app_result(host: HostApp, elsewhere: bool) -> OpenResult {
-    let (message, hint) = if elsewhere {
-        (
-            format!("The session is in {} on another desktop", host.name()),
+pub fn host_app_result(host: HostApp, shown: Shown, elsewhere: bool) -> OpenResult {
+    let name = host.name();
+    let (message, hint) = match (shown, elsewhere) {
+        (Shown::Session, true) => (
+            format!("The session is in {name} on another desktop"),
             Some("spaces-setting".into()),
-        )
-    } else {
-        (
+        ),
+        (Shown::Dashboard, true) => (
+            format!("`claude agents` is open in {name} on another desktop"),
+            Some("spaces-setting".into()),
+        ),
+        (Shown::Session, false) => (
             format!(
-                "Switched to {}, where this session is running. Hoku can't select its terminal tab there.",
-                host.name()
+                "Switched to {name}, where this session is running. Hoku can't select its terminal tab there."
             ),
             None,
-        )
+        ),
+        (Shown::Dashboard, false) => (
+            format!(
+                "Switched to {name}, where `claude agents` is open. Pick this session there; Hoku can't select its terminal tab."
+            ),
+            None,
+        ),
     };
     OpenResult {
         method: "focus".into(),
@@ -718,6 +770,33 @@ fn open_codex(session: &Session) -> HubResult<OpenResult> {
     ok("deep-link", "Opened in Codex")
 }
 
+/// Switch to the app hosting a `claude` client of a background session (pid and tty from `ps`):
+/// VS Code is brought forward, an iTerm or Terminal tab is selected. None when its host can't be
+/// reached (tmux, Warp, a closed tab), so the caller attaches in a new tab instead.
+fn go_to_client(pid: i64, tty: &str, shown: Shown, ctx: &LaunchContext) -> Option<OpenResult> {
+    let host = hosting_app(pid)?;
+    let Some(app) = host.terminal() else {
+        return Some(focus_host_app(host, shown, ctx));
+    };
+    focus_tty(app, tty).ok()??;
+    let message = match shown {
+        Shown::Session => format!(
+            "Switched to the tab attached to this session in {}",
+            app.name()
+        ),
+        Shown::Dashboard => format!(
+            "Switched to `claude agents` in {}. Pick this session there.",
+            app.name()
+        ),
+    };
+    Some(OpenResult {
+        method: "focus".into(),
+        message,
+        activate: Some(app.bundle_id().into()),
+        hint: None,
+    })
+}
+
 fn open_claude_code(session: &Session, ctx: &LaunchContext) -> HubResult<OpenResult> {
     let id = validate_id(session.external_id.as_deref().unwrap_or(""))?;
     let claude = ctx
@@ -732,23 +811,17 @@ fn open_claude_code(session: &Session, ctx: &LaunchContext) -> HubResult<OpenRes
             if let Some(job) = live.job_id.as_deref() {
                 let job = validate_id(job)?;
                 // Already attached in a terminal tab? Switch to it rather than attach again.
-                if let Some((pid, tty)) = attached_client(job) {
-                    let host = hosting_app(pid);
-                    if let Some(host) = host.filter(|h| h.terminal().is_none()) {
-                        return Ok(focus_host_app(host, ctx));
-                    }
-                    if let Some(app) = host.and_then(|h| h.terminal()) {
-                        if let Ok(Some(_)) = focus_tty(app, &tty) {
-                            return ok_in(
-                                app,
-                                "focus",
-                                format!(
-                                    "Switched to the tab attached to this session in {}",
-                                    app.name()
-                                ),
-                            );
-                        }
-                    }
+                if let Some(found) = attached_client(job)
+                    .and_then(|(pid, tty)| go_to_client(pid, &tty, Shown::Session, ctx))
+                {
+                    return Ok(found);
+                }
+                // Or open in a `claude agents` dashboard (in VS Code, say): go there, it lists this
+                // session. Its arguments don't say which session it shows, so the message asks.
+                if let Some(found) = agents_dashboard()
+                    .and_then(|(pid, tty)| go_to_client(pid, &tty, Shown::Dashboard, ctx))
+                {
+                    return Ok(found);
                 }
                 let cwd =
                     existing_dir(live.cwd.as_deref().or(session.working_directory.as_deref()))
@@ -775,7 +848,7 @@ fn open_claude_code(session: &Session, ctx: &LaunchContext) -> HubResult<OpenRes
             let host = hosting_app(live.pid);
             // VS Code: bring the app forward. Its terminal tabs can't be selected from outside.
             if let Some(host) = host.filter(|h| h.terminal().is_none()) {
-                return Ok(focus_host_app(host, ctx));
+                return Ok(focus_host_app(host, Shown::Session, ctx));
             }
             if let (Some(app), Some(tty)) = (host.and_then(|h| h.terminal()), tty_of(live.pid)) {
                 match focus_tty(app, &tty) {
@@ -893,6 +966,38 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn finds_the_newest_agents_dashboard() {
+        let ps = concat!(
+            "  101  2-03:04:05 ttys003  -zsh\n",
+            "  202    01:02:03 ttys004  /Users/j/.local/bin/claude agents --inherit-permission-mode\n",
+            "  303       00:42 ttys006  claude agents\n",
+            "  404       00:05 ??       /Users/j/.local/share/claude/versions/2.1.282 agents\n",
+            "  505       00:01 ttys007  claude --bg-spare\n",
+        );
+        // The newest one with a terminal tab; background helpers without a tty never count.
+        assert_eq!(
+            find_agents_dashboard(ps),
+            Some((303, "/dev/ttys006".into()))
+        );
+        assert_eq!(
+            find_agents_dashboard("  9    00:10 ttys001  vim claude agents\n"),
+            None
+        );
+        assert_eq!(
+            find_agents_dashboard("  9    00:10 ttys001  claude attach 8cd6e7fd\n"),
+            None
+        );
+    }
+
+    #[test]
+    fn parses_ps_elapsed_time() {
+        assert_eq!(elapsed_secs("00:42"), Some(42));
+        assert_eq!(elapsed_secs("01:02:03"), Some(3723));
+        assert_eq!(elapsed_secs("2-03:04:05"), Some(2 * 86_400 + 11_045));
+        assert_eq!(elapsed_secs("soon"), None);
     }
 
     #[test]
@@ -1017,13 +1122,20 @@ mod tests {
 
     #[test]
     fn vscode_is_focused_not_relaunched() {
-        let r = host_app_result(HostApp::VsCode, false);
+        let r = host_app_result(HostApp::VsCode, Shown::Session, false);
         assert_eq!(r.method, "focus");
         assert_eq!(r.activate.as_deref(), Some("com.microsoft.VSCode"));
         assert!(r.message.contains("VS Code") && r.message.contains("terminal tab"));
         assert_eq!(r.hint, None);
-        let r = host_app_result(HostApp::VsCodeInsiders, true);
+        let r = host_app_result(HostApp::VsCodeInsiders, Shown::Session, true);
         assert_eq!(r.activate.as_deref(), Some("com.microsoft.VSCodeInsiders"));
+        assert_eq!(r.hint.as_deref(), Some("spaces-setting"));
+        // A dashboard lists the session but doesn't show it yet: say so.
+        let r = host_app_result(HostApp::VsCode, Shown::Dashboard, false);
+        assert_eq!(r.activate.as_deref(), Some("com.microsoft.VSCode"));
+        assert!(r.message.contains("claude agents") && r.message.contains("Pick this session"));
+        let r = host_app_result(HostApp::VsCode, Shown::Dashboard, true);
+        assert!(r.message.contains("claude agents") && r.message.contains("another desktop"));
         assert_eq!(r.hint.as_deref(), Some("spaces-setting"));
     }
 
