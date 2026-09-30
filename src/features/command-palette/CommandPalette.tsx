@@ -30,7 +30,7 @@ const ACTIONS: Omit<Extract<Item, { kind: "action" }>, "kind">[] = [
   { id: "a:filter-needs", label: "Filter Galaxy: Needs You", keywords: "filter galaxy needs you waiting status", run: () => quickFilter("needs_you") },
   { id: "a:filter-working", label: "Filter Galaxy: Working", keywords: "filter galaxy working active running live status", run: () => quickFilter("working") },
   { id: "a:filter-clear", label: "Clear status filter", keywords: "clear filter status reset all", run: () => setStatusFilter([]) },
-  { id: "a:favorites", label: "Show favorites", keywords: "favorites starred pinned", run: () => toggleList("favorites") },
+  { id: "a:favorites", label: "Show favorites", hint: "Sessions you keep handy", keywords: "favorites starred pinned", run: () => toggleList("favorites") },
   {
     id: "a:resume",
     label: "Resume this project",

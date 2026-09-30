@@ -347,7 +347,10 @@ function Favorites({ projectById }: { projectById: Map<string, Project> }) {
       <Header title={TITLES.favorites} />
       <div className="flex-1 overflow-y-auto px-1.5 pb-3">
         {list.length === 0 ? (
-          <div className="px-3 py-6 text-[12px] leading-relaxed text-ink-3">Star a session in its inspector to keep it here, however old or offline it gets.</div>
+          <div className="px-3 py-6 text-[12px] leading-relaxed text-ink-3">
+            Star a session in its inspector to keep it here, however old or offline it gets.
+            <div className="mt-2 text-ink-4">Want to review something later and then be done with it? Use Follow up instead.</div>
+          </div>
         ) : (
           list.map((s) => <SessionRow key={s.id} s={s} project={s.projectId ? (projectById.get(s.projectId) ?? null) : null} selected={s.id === selectedId} />)
         )}

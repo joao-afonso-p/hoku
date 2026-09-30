@@ -172,7 +172,12 @@ export function Inspector({ session }: { session: Session }) {
               <IconFolder size={13} /> Reveal
             </button>
           )}
-          <button className="btn" onClick={() => void toggleFavorite(session)} aria-pressed={session.favorite}>
+          <button
+            className="btn"
+            onClick={() => void toggleFavorite(session)}
+            aria-pressed={session.favorite}
+            title={session.favorite ? "Remove from Favorites" : "Keep this session handy, however old it gets"}
+          >
             {session.favorite ? <IconStarFilled size={13} className="text-star" /> : <IconStar size={13} />}
             {session.favorite ? "Favorited" : "Favorite"}
           </button>
