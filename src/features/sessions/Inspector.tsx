@@ -358,7 +358,7 @@ function ForgetFooter({ session, note }: { session: Session; note: string }) {
       {plan.canKeep && project && (
         <div className="mt-2.5">
           <label className="flex items-center gap-2 text-ink-2">
-            <input type="checkbox" className="accent-star" checked={keep} onChange={(e) => setKeep(e.target.checked)} />
+            <input type="checkbox" checked={keep} onChange={(e) => setKeep(e.target.checked)} />
             {plan.replaces ? `Replace ${project.name}’s next step with the note` : `Keep the note as ${project.name}’s next step`}
           </label>
           {keeping && (

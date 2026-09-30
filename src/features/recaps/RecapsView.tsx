@@ -406,7 +406,6 @@ function OutcomesSection({
                 <label className="flex min-w-0 flex-1 items-center gap-2.5">
                   <input
                     type="checkbox"
-                    className="accent-star"
                     checked={onCard.has(o.id)}
                     disabled={!onCard.has(o.id) && onCard.size >= max}
                     onChange={() => toggle(o.id)}
@@ -514,7 +513,7 @@ function ProjectsSection({ recap, prefs, updatePrefs }: { recap: Recap; prefs: S
                 <span className="text-[11px] text-ink-4">Never named</span>
               ) : (
                 <span className="flex min-w-0 items-center gap-2">
-                  <input type="checkbox" className="accent-star" checked={named} onChange={() => setLabel(p, named ? null : p.name)} aria-label={`Name ${p.name} on the card`} />
+                  <input type="checkbox" checked={named} onChange={() => setLabel(p, named ? null : p.name)} aria-label={`Name ${p.name} on the card`} />
                   {named ? (
                     <input className="field h-[24px] min-w-0 flex-1 px-2 py-0 text-[12px]" value={label} maxLength={40} onChange={(e) => setLabel(p, e.target.value)} aria-label={`Public name for ${p.name}`} />
                   ) : (
@@ -583,7 +582,7 @@ function Segmented<K extends string>({ label, value, options, onChange }: { labe
 function Check({ checked, onChange, children, hint }: { checked: boolean; onChange: (v: boolean) => void; children: ReactNode; hint?: string }) {
   return (
     <label className="flex items-center gap-2 py-[3px] text-[12px] text-ink-2" title={hint}>
-      <input type="checkbox" className="accent-star" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
       {children}
     </label>
   );

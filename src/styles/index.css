@@ -63,6 +63,30 @@
   button {
     cursor: default;
   }
+  /* The native box tinted starlight reads the same checked or not: hollow when off, filled when on. */
+  input[type="checkbox"] {
+    appearance: none;
+    -webkit-appearance: none;
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+    margin: 0;
+    border: 1px solid var(--color-ink-3);
+    border-radius: 4px;
+    background: transparent center / 12px 12px no-repeat;
+    transition: background-color 120ms, border-color 120ms;
+  }
+  input[type="checkbox"]:hover:not(:disabled) {
+    border-color: var(--color-ink-2);
+  }
+  input[type="checkbox"]:checked {
+    border-color: var(--color-star);
+    background-color: var(--color-star);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' fill='none' stroke='%230d0e12' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  }
+  input[type="checkbox"]:disabled {
+    opacity: 0.35;
+  }
   :focus-visible {
     outline: 1px solid rgb(241 234 216 / 0.45);
     outline-offset: 2px;
