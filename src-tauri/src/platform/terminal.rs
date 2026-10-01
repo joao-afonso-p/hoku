@@ -311,6 +311,117 @@ mod tests {
     }
 
     #[test]
+    fn each_terminal_style_passes_cwd_and_one_command() {
+        let cmd = "cd '/work/app' && '/usr/bin/claude' --resume abcdef12";
+        let expect = |style: LaunchStyle, args: Vec<&str>| {
+            let bin = args[0];
+            let want: Vec<String> = args.into_iter().map(str::to_string).collect();
+            assert_eq!(argv(style, bin, "/work/app", cmd), want, "{style:?}");
+        };
+        expect(
+            LaunchStyle::WorkingDirectoryDashDash,
+            vec![
+                "gnome-terminal",
+                "--working-directory",
+                "/work/app",
+                "--",
+                "bash",
+                "-lc",
+                cmd,
+            ],
+        );
+        expect(
+            LaunchStyle::WorkdirExec,
+            vec![
+                "konsole",
+                "--workdir",
+                "/work/app",
+                "-e",
+                "bash",
+                "-lc",
+                cmd,
+            ],
+        );
+        expect(
+            LaunchStyle::WorkingDirectoryExecute,
+            vec![
+                "xfce4-terminal",
+                "--working-directory",
+                "/work/app",
+                "-x",
+                "bash",
+                "-lc",
+                cmd,
+            ],
+        );
+        expect(
+            LaunchStyle::Kitty,
+            vec![
+                "kitty",
+                "--detach",
+                "--directory",
+                "/work/app",
+                "bash",
+                "-lc",
+                cmd,
+            ],
+        );
+        expect(
+            LaunchStyle::WorkingDirectoryE,
+            vec![
+                "alacritty",
+                "--working-directory",
+                "/work/app",
+                "-e",
+                "bash",
+                "-lc",
+                cmd,
+            ],
+        );
+        expect(
+            LaunchStyle::Wezterm,
+            vec![
+                "wezterm",
+                "start",
+                "--cwd",
+                "/work/app",
+                "--",
+                "bash",
+                "-lc",
+                cmd,
+            ],
+        );
+        expect(
+            LaunchStyle::Foot,
+            vec![
+                "foot",
+                "--working-directory",
+                "/work/app",
+                "bash",
+                "-lc",
+                cmd,
+            ],
+        );
+        expect(LaunchStyle::Xterm, vec!["xterm", "-e", "bash", "-lc", cmd]);
+        expect(
+            LaunchStyle::Xdg,
+            vec!["xdg-terminal-exec", "--", "bash", "-lc", cmd],
+        );
+    }
+
+    #[test]
+    fn auto_follows_known_order_and_mac_prefs_do_not_select_a_linux_id() {
+        let present = |k: &TerminalKind| matches!(k.id, "konsole" | "xterm" | "xdg-terminal-exec");
+        assert_eq!(resolve("auto", present).unwrap().id, "konsole");
+        assert_eq!(resolve("iterm", present).unwrap().id, "konsole");
+        assert_eq!(resolve("xterm", present).unwrap().id, "xterm");
+        assert_eq!(
+            known().iter().find(|k| k.id == "wezterm").unwrap().bins,
+            &["wezterm", "wezterm-gui"][..]
+        );
+    }
+
+    #[test]
     fn explicit_pref_wins_and_mac_values_fall_through() {
         let present = |k: &TerminalKind| k.id == "kitty" || k.id == "xterm";
         assert_eq!(resolve("kitty", present).unwrap().id, "kitty");

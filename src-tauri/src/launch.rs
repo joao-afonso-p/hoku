@@ -1252,7 +1252,94 @@ mod tests {
     fn only_expected_urls_open() {
         assert!(allowed_url("claude://claude.ai/chat/x"));
         assert!(allowed_url("codex://threads/x"));
+        assert!(allowed_url("https://claude.ai/chat/x"));
+        assert!(allowed_url("https://chatgpt.com/c/x"));
         assert!(!allowed_url("file:///etc/passwd"));
         assert!(!allowed_url("javascript:alert(1)"));
+        assert!(!allowed_url("https://example.com/"));
+    }
+
+    #[test]
+    fn open_url_refuses_before_asking_the_os() {
+        let err = open_url("file:///etc/passwd").unwrap_err();
+        assert!(err.contains("refusing to open"));
+        assert!(!err.contains("xdg-open"));
+        assert!(!err.contains("/usr/bin/open"));
+    }
+
+    #[test]
+    fn reveal_does_not_launch_a_file_manager_for_a_missing_folder() {
+        let err = reveal("/tmp/hoku-missing-folder-805e").unwrap_err();
+        assert!(err.message.contains("no longer exists"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_open_refuses_without_starting_a_terminal() {
+        use crate::models::{Confidence, RuntimeState, RuntimeStatus};
+
+        let session = |external_id: &str, dir: Option<&str>, source_missing: bool| Session {
+            id: "s".into(),
+            provider: Provider::ClaudeCode,
+            provider_account_id: None,
+            external_id: Some(external_id.into()),
+            title: "t".into(),
+            project_id: None,
+            working_directory: dir.map(str::to_string),
+            repository: None,
+            branch: None,
+            source: None,
+            source_url: None,
+            deep_link: None,
+            last_activity_at: None,
+            last_opened_at: None,
+            runtime: RuntimeStatus {
+                state: RuntimeState::Offline,
+                confidence: Confidence::High,
+                reason: None,
+                detail: None,
+                source: None,
+                action_required: false,
+                since: None,
+                last_observed_at: None,
+            },
+            favorite: false,
+            notes: None,
+            metadata: None,
+            discovery: "scan".into(),
+            project_locked: false,
+            title_locked: false,
+            source_missing,
+            follow_up: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        let ctx = |bin: Option<&str>| LaunchContext {
+            claude_bin: bin.map(str::to_string),
+            terminal_pref: "auto".into(),
+            claude_home: std::env::temp_dir().join("hoku-no-claude-home-805e"),
+            hoku_fullscreen: false,
+        };
+
+        let missing_bin = open_session(&session("abcdef12", Some("/tmp"), false), &ctx(None));
+        assert!(missing_bin.unwrap_err().message.contains("this computer"));
+
+        let bad_id = open_session(
+            &session("x; rm -rf", Some("/tmp"), false),
+            &ctx(Some("claude")),
+        );
+        assert!(bad_id.is_err());
+
+        let gone = open_session(
+            &session("abcdef12", None, true),
+            &ctx(Some("/usr/bin/claude")),
+        );
+        assert!(gone.unwrap_err().message.contains("can't be resumed"));
+
+        let no_dir = open_session(
+            &session("abcdef12", Some("/tmp/hoku-missing-cwd-805e"), false),
+            &ctx(Some("/usr/bin/claude")),
+        );
+        assert!(no_dir.unwrap_err().message.contains("no longer exists"));
     }
 }

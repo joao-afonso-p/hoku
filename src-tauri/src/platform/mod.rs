@@ -142,3 +142,45 @@ pub fn run_in_terminal(pref: &str, cwd: &str, command_line: &str) -> Result<Stri
 pub fn raise_pid(pid: i64) -> Option<String> {
     os::raise_pid(pid)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn host_info_matches_the_os_it_was_built_for() {
+        let info = host_info();
+        if cfg!(target_os = "linux") {
+            assert_eq!(info.os, "linux");
+            assert!(!info.dock);
+            assert!(!info.spaces);
+            assert_eq!(info.terminals[0].id, "auto");
+            assert!(info.terminals.iter().all(|t| t.id != "iterm"));
+            assert!(info.terminals.iter().any(|t| t.id == "xterm"));
+            assert!(bundled_codex_cli().is_none());
+            assert!(!iterm_installed());
+            let spaces = open_spaces_settings().unwrap_err();
+            assert!(spaces.contains("macOS"));
+            assert!(open_notification_settings().is_err());
+            let cowork = cowork_sessions_dir(std::path::Path::new("/home/me"));
+            assert!(
+                !cowork.to_string_lossy().contains("Library"),
+                "linux cowork path must not use ~/Library: {}",
+                cowork.display()
+            );
+        }
+        if cfg!(target_os = "macos") {
+            assert_eq!(info.os, "macos");
+            assert!(info.dock);
+            assert!(info.spaces);
+            let ids: Vec<_> = info.terminals.iter().map(|t| t.id.as_str()).collect();
+            assert_eq!(ids, ["auto", "iterm", "terminal"]);
+            assert_eq!(
+                cowork_sessions_dir(std::path::Path::new("/Users/me")),
+                std::path::PathBuf::from(
+                    "/Users/me/Library/Application Support/Claude/local-agent-mode-sessions"
+                )
+            );
+        }
+    }
+}

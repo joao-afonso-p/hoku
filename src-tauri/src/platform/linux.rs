@@ -400,6 +400,40 @@ fn run(cmd: &mut Command) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::{OsStr, OsString};
+    use std::sync::Mutex;
+
+    /// XDG lookups read process env. Tests in this crate run in parallel.
+    fn with_xdg(config: Option<&Path>, data: Option<&Path>, body: impl FnOnce()) {
+        static LOCK: Mutex<()> = Mutex::new(());
+        let _guard = LOCK.lock().unwrap();
+        let prev = [
+            ("XDG_CONFIG_HOME", std::env::var_os("XDG_CONFIG_HOME")),
+            ("XDG_DATA_HOME", std::env::var_os("XDG_DATA_HOME")),
+        ];
+        set_xdg("XDG_CONFIG_HOME", config);
+        set_xdg("XDG_DATA_HOME", data);
+        struct Restore([(&'static str, Option<OsString>); 2]);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                for (key, value) in &self.0 {
+                    match value {
+                        Some(v) => std::env::set_var(key, v),
+                        None => std::env::remove_var(key),
+                    }
+                }
+            }
+        }
+        let _restore = Restore(prev);
+        body();
+    }
+
+    fn set_xdg(key: &str, path: Option<&Path>) {
+        match path {
+            Some(path) => std::env::set_var(key, path.as_os_str()),
+            None => std::env::remove_var(key),
+        }
+    }
 
     #[test]
     fn cowork_dir_prefers_an_existing_xdg_folder() {
@@ -407,30 +441,106 @@ mod tests {
         let home = tmp.path();
         let expected = home.join(".config/Claude/local-agent-mode-sessions");
         std::fs::create_dir_all(&expected).unwrap();
-        let prev = std::env::var_os("XDG_CONFIG_HOME");
-        std::env::remove_var("XDG_CONFIG_HOME");
-        let got = cowork_sessions_dir(home);
-        match prev {
-            Some(v) => std::env::set_var("XDG_CONFIG_HOME", v),
-            None => std::env::remove_var("XDG_CONFIG_HOME"),
-        }
-        assert_eq!(got, expected);
+        with_xdg(None, None, || {
+            assert_eq!(cowork_sessions_dir(home), expected);
+        });
     }
 
     #[test]
     fn missing_cowork_dir_still_points_at_xdg_config() {
         let tmp = tempfile::tempdir().unwrap();
-        let prev = std::env::var_os("XDG_CONFIG_HOME");
-        std::env::remove_var("XDG_CONFIG_HOME");
-        let got = cowork_sessions_dir(tmp.path());
-        match prev {
-            Some(v) => std::env::set_var("XDG_CONFIG_HOME", v),
-            None => std::env::remove_var("XDG_CONFIG_HOME"),
-        }
-        assert_eq!(
-            got,
-            tmp.path().join(".config/Claude/local-agent-mode-sessions")
-        );
-        assert!(!got.exists());
+        with_xdg(None, None, || {
+            let got = cowork_sessions_dir(tmp.path());
+            assert_eq!(
+                got,
+                tmp.path().join(".config/Claude/local-agent-mode-sessions")
+            );
+            assert!(!got.exists());
+            assert!(!got.to_string_lossy().contains("Library"));
+        });
+    }
+
+    #[test]
+    fn cowork_dir_honors_absolute_xdg_dirs_in_order() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let config = tmp.path().join("config");
+        let data = tmp.path().join("data");
+        let from_data = data.join("Claude/local-agent-mode-sessions");
+        std::fs::create_dir_all(&from_data).unwrap();
+        with_xdg(Some(&config), Some(&data), || {
+            assert_eq!(cowork_sessions_dir(&home), from_data);
+        });
+        let from_config = config.join("Claude/local-agent-mode-sessions");
+        std::fs::create_dir_all(&from_config).unwrap();
+        with_xdg(Some(&config), Some(&data), || {
+            assert_eq!(cowork_sessions_dir(&home), from_config);
+        });
+    }
+
+    #[test]
+    fn relative_xdg_config_home_is_ignored() {
+        let tmp = tempfile::tempdir().unwrap();
+        with_xdg(None, None, || {
+            std::env::set_var("XDG_CONFIG_HOME", OsStr::new("relative"));
+            let got = cowork_sessions_dir(tmp.path());
+            assert_eq!(
+                got,
+                tmp.path().join(".config/Claude/local-agent-mode-sessions")
+            );
+        });
+    }
+
+    #[test]
+    fn downloads_follow_user_dirs_and_never_library() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("user-dirs.dirs"),
+            "XDG_DOWNLOAD_DIR=\"/var/hoku-downloads\"\n",
+        )
+        .unwrap();
+        with_xdg(Some(tmp.path()), None, || {
+            assert_eq!(downloads_dir(), PathBuf::from("/var/hoku-downloads"));
+        });
+        let empty = tmp.path().join("empty");
+        std::fs::create_dir(&empty).unwrap();
+        with_xdg(Some(&empty), None, || {
+            let got = downloads_dir();
+            assert!(got.ends_with("Downloads"));
+            assert!(!got.to_string_lossy().contains("Library"));
+        });
+    }
+
+    #[test]
+    fn a_desktop_file_in_xdg_data_home_counts_as_installed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let apps = tmp.path().join("applications");
+        std::fs::create_dir_all(&apps).unwrap();
+        std::fs::write(
+            apps.join("claude.desktop"),
+            "[Desktop Entry]\nExec=/usr/bin/claude-desktop %u\n",
+        )
+        .unwrap();
+        with_xdg(None, Some(tmp.path()), || {
+            let app = claude_desktop();
+            assert!(app.installed);
+            assert_eq!(
+                app.path.as_deref(),
+                Some(apps.join("claude.desktop").to_str().unwrap())
+            );
+        });
+    }
+
+    #[test]
+    fn executable_bit_is_required_to_count_as_a_tool() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("hoku-not-a-terminal");
+        std::fs::write(&path, b"#!/bin/sh\n").unwrap();
+        assert!(!is_exec(&path));
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&path, perms).unwrap();
+        assert!(is_exec(&path));
     }
 }

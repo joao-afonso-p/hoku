@@ -229,3 +229,42 @@ pub fn pid_alive(pid: i64) -> bool {
     let r = unsafe { libc::kill(pid as i32, 0) };
     r == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn computer_follows_the_target_os() {
+        if cfg!(target_os = "macos") {
+            assert_eq!(computer(), "this Mac");
+        } else {
+            assert_eq!(computer(), "this computer");
+        }
+    }
+
+    #[test]
+    fn a_missing_store_says_which_computer_and_not_a_library_path() {
+        let home = tempfile::tempdir().unwrap();
+        let adapters: Vec<Box<dyn SessionAdapter>> = vec![
+            Box::new(claude_code::ClaudeCodeAdapter::new(
+                home.path().join(".claude"),
+            )),
+            Box::new(codex::CodexAdapter::new(home.path().join(".codex"))),
+            Box::new(claude_desktop::CoworkAdapter::new(
+                home.path().join("cowork"),
+            )),
+        ];
+        for adapter in adapters {
+            match adapter.scan().unwrap() {
+                ScanOutcome::Unavailable(msg) => {
+                    assert!(msg.contains(computer()), "{}: {msg}", adapter.key());
+                    assert!(!msg.contains("Library"), "{}: {msg}", adapter.key());
+                }
+                ScanOutcome::Found(_) => {
+                    panic!("{} found sessions in an empty directory", adapter.key())
+                }
+            }
+        }
+    }
+}

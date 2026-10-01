@@ -307,8 +307,17 @@ mod tests {
     #[test]
     fn xdg_dirs_are_not_projects() {
         let home = home_dir();
-        let unassigned = vec![(Some(format!("{home}/.config/Claude")), None)];
-        assert!(suggest_projects(&unassigned, &[], &[]).is_empty());
+        for dir in [
+            ".config/Claude",
+            ".local/share/com.hoku.app",
+            ".var/app/com.anthropic.claudefordesktop/config",
+        ] {
+            let unassigned = vec![(Some(format!("{home}/{dir}")), None)];
+            assert!(
+                suggest_projects(&unassigned, &[], &[]).is_empty(),
+                "{dir} must not become a project"
+            );
+        }
         let unassigned = vec![(Some(format!("{home}/code/app")), None)];
         assert_eq!(suggest_projects(&unassigned, &[], &[]).len(), 1);
     }
