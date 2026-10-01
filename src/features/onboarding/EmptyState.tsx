@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { loadIntegrations, openOverlay, scan } from "../../app/actions";
 import { useHub } from "../../app/store";
 import mark from "../../assets/hoku-mark-256.png";
+import { here } from "../../lib/host";
 
 /** First run: one sentence, one primary action, and what we can see on this Mac. */
 export function EmptyState() {
@@ -24,10 +25,10 @@ export function EmptyState() {
         <div className="mt-4 text-[12px] font-semibold tracking-[0.18em] text-ink-3 uppercase">Hoku</div>
         <h1 className="mt-1.5 text-[19px] font-semibold tracking-[-0.01em] text-ink">Your AI work, mapped.</h1>
         <p className="mt-2 text-[13px] leading-relaxed text-ink-3">
-          Every Claude and Codex session on this Mac, arranged by project. Find any of them in a second and jump straight back in.
+          Every Claude and Codex session on {here()}, arranged by project. Find any of them in a second and jump straight back in.
         </p>
         <button className="btn btn-primary mt-6 h-9 px-5 text-[13px]" onClick={() => void scan()}>
-          Scan this Mac
+          Scan {here()}
         </button>
         <div className="mt-3 flex gap-1 text-[12px]">
           <button className="btn btn-ghost" onClick={() => openOverlay({ kind: "project" })}>
@@ -46,7 +47,7 @@ export function EmptyState() {
               </span>
             </div>
           ))}
-          <div className="mt-2 text-[11px] text-ink-4">Read-only · nothing leaves this Mac</div>
+          <div className="mt-2 text-[11px] text-ink-4">Read-only · nothing leaves {here()}</div>
         </div>
       </div>
     </div>

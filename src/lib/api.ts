@@ -3,6 +3,7 @@ import type {
   DraftProviderStatus,
   HubError,
   HubSnapshot,
+  HostInfo,
   NotificationStatus,
   NotificationTarget,
   OpenResult,
@@ -127,4 +128,5 @@ export const api = {
   loadDemo: () => call<void>("load_demo"),
   clearDemo: () => call<void>("clear_demo"),
   databasePath: () => call<string>("database_path"),
+  hostInfo: () => call<HostInfo>("host_info"),
 };

@@ -7,9 +7,9 @@ request should look like.
 By participating you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md). To report
 a security problem, see [SECURITY.md](SECURITY.md). Don't open a public issue for it.
 
-## Supported platform
+## Supported platforms
 
-Hoku runs on **macOS only**.
+Hoku runs on **macOS** and **Linux**. Windows is not supported.
 
 - No minimum macOS version is pinned in `src-tauri/tauri.conf.json`. Development and
   testing happen on current macOS releases (the provider investigation in
@@ -17,17 +17,21 @@ Hoku runs on **macOS only**.
   behaviour is version-aware. For example, `launch::yield_to` uses the cooperative
   activation API that macOS 14 introduced, and only when the running macOS supports it.
   Please include your macOS version in bug reports.
-- **Linux and Windows are not supported.** The Rust side calls AppKit through `objc2`,
-  drives iTerm and Terminal with AppleScript (`osascript`), and reads macOS-specific paths
-  such as `~/Library/Application Support`. Some of this is `cfg`-gated, so parts of the
-  crate may compile elsewhere, but the app isn't expected to work on another OS today. If
-  you're interested in porting it, open an issue with the **Platform support** template
-  first so we can discuss the approach before you write code.
+- **Linux** uses WebKitGTK, `xdg-open`, XDG directories and the installed terminal emulator.
+  It does not implement AppleScript, Spaces, or the Dock. Claude Code sessions resume or
+  attach in a new terminal window. Hoku can raise a window with `wmctrl` when that tool
+  is installed, and it says so when it cannot select a tab. Claude Desktop's Cowork files
+  are read from `~/.config/Claude/local-agent-mode-sessions` when that directory exists.
+- **Windows is not supported.** Open an issue with the **Platform support** template
+  before starting a Windows port.
 
 ## Prerequisites
 
-- macOS
-- Xcode Command Line Tools: `xcode-select --install`
+- macOS or Linux
+- On macOS: Xcode Command Line Tools (`xcode-select --install`)
+- On Linux (Debian/Ubuntu): `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`,
+  `libayatana-appindicator3-dev`, `librsvg2-dev`, `patchelf`, `build-essential`, `file`,
+  `libxdo-dev`, `libssl-dev`, `pkg-config`
 - Node.js 22.12+ (Vitest 5 and Vite 8 require it; see `engines` in `package.json`)
 - pnpm
 - Rust stable, installed with [rustup](https://rustup.rs)
@@ -45,7 +49,8 @@ Other useful commands:
 pnpm dev                      # frontend only, in a browser (no Rust backend, IPC calls fail)
 pnpm build                    # typecheck + production frontend build into dist/
 pnpm tauri build --no-bundle  # release build of the Rust app without creating Hoku.app
-pnpm install:local            # build and install /Applications/Hoku.app (see README)
+pnpm install:local            # macOS: build and install /Applications/Hoku.app (see README)
+pnpm tauri build --bundles deb   # Linux: build a .deb
 ```
 
 Debug builds start a localhost-only control socket (`src-tauri/src/devtools.rs`, port
@@ -53,8 +58,9 @@ Debug builds start a localhost-only control socket (`src-tauri/src/devtools.rs`,
 builds. The socket is unauthenticated, so while `pnpm tauri dev` runs any local process can
 drive the webview. Don't run dev builds on a shared machine.
 
-Hoku's own index lives in `~/Library/Application Support/com.hoku.app/hub.sqlite`, and
-`pnpm tauri dev` uses that same file. To test against a clean state, move the folder
+Hoku's own index lives in `~/Library/Application Support/com.hoku.app/hub.sqlite` on macOS
+and in `$XDG_DATA_HOME/com.hoku.app/hub.sqlite` (usually `~/.local/share/com.hoku.app/hub.sqlite`)
+on Linux. `pnpm tauri dev` uses that same file. To test against a clean state, move the folder
 aside temporarily. **Settings → Load demo** adds clearly labelled demo data, which
 **Remove demo data** deletes again.
 
@@ -71,7 +77,8 @@ src-tauri/src/            Rust: all I/O
   scan.rs                 runs adapters, merges results into the hub DB
   runtime.rs              runtime monitor (4 s tick, watchdog, activity events)
   attention.rs            Needs You notifications, Dock badge and bounce
-  launch.rs               opening sessions: deep links, terminals via AppleScript
+  launch.rs               opening sessions: deep links, macOS terminals, Linux terminals
+  platform/               macOS (`open`, Finder, ~/Library) and Linux (xdg-open, XDG, terminals)
   integrations.rs         installed apps/CLIs, sign-in status, capability table
   db.rs                   Hoku's own SQLite: schema, migrations, merge rules
   commands.rs             the IPC surface
@@ -263,8 +270,11 @@ pnpm typecheck
 pnpm test
 pnpm build
 (cd src-tauri && cargo fmt --check && cargo test)
-pnpm tauri build --debug --bundles app   # unsigned app build, same as CI
+pnpm tauri build --debug --bundles app   # macOS: unsigned app build, same as CI
+pnpm tauri build --debug --bundles deb   # Linux: debug .deb, same as CI
 ```
+
+Run the Tauri bundle command for the OS you are on. CI runs both.
 
 There are also `#[ignore]`d manual probes. They're optional and not part of CI:
 

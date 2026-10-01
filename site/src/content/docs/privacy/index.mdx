@@ -21,7 +21,8 @@ Hoku is local-first: it runs entirely on your Mac and has no server behind it. T
 | `~/.claude/sessions` | Claude Code's list of running sessions | Read-only. The secret key files next to it are never opened. |
 | `~/.codex/state_*.sqlite` | The Codex thread index | Opened read-only, and SQLite is told to refuse writes. |
 | `~/.codex/sessions/…` | The end of recent Codex thread logs | Read-only, in memory, for live state. |
-| `~/Library/Application Support/Claude/local-agent-mode-sessions` | Claude Desktop Cowork metadata | Read-only, named fields only. |
+| `~/Library/Application Support/Claude/local-agent-mode-sessions` | Claude Desktop Cowork metadata on macOS | Read-only, named fields only. |
+| `~/.config/Claude/local-agent-mode-sessions` | Claude Desktop Cowork metadata on Linux, when that folder exists | Read-only, named fields only. |
 | The process list | Which provider apps and sessions are running | Read-only. |
 
 Hoku never creates, modifies, moves, locks or deletes anything in those places. It doesn't install hooks or change any provider's settings.
@@ -32,7 +33,7 @@ Hoku never creates, modifies, moves, locks or deletes anything in those places. 
 
 ## What Hoku stores
 
-Everything Hoku stores is in one file on your Mac: `~/Library/Application Support/com.hoku.app/hub.sqlite`. See [Your data](/hoku/privacy/your-data/).
+Everything Hoku stores is in one file: `~/Library/Application Support/com.hoku.app/hub.sqlite` on macOS, or `~/.local/share/com.hoku.app/hub.sqlite` on Linux (`$XDG_DATA_HOME` when that is set). See [Your data](/hoku/privacy/your-data/).
 
 Per session:
 

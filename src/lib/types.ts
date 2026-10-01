@@ -206,6 +206,22 @@ export interface NotificationStatus {
   alerts: boolean;
   /** "Badge application icon" is on for Hoku in System Settings. */
   badges: boolean;
+  /** Dock badge and bounce exist on this operating system. */
+  dock: boolean;
+}
+
+export interface TerminalChoice {
+  id: string;
+  label: string;
+  installed: boolean;
+}
+
+/** OS wording and which terminals Settings can offer. */
+export interface HostInfo {
+  os: "macos" | "linux" | "unsupported";
+  dock: boolean;
+  spaces: boolean;
+  terminals: TerminalChoice[];
 }
 
 /** A clicked Needs You banner. `sessionId: null` leads to the Needs You inbox. */

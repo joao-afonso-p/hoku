@@ -9,9 +9,11 @@ A local-first macOS app that indexes Claude Code, Codex and Claude Desktop sessi
 **read-only**, shows them as projects → sessions on a constellation map, and reopens each
 session in its native tool. It does not replace those tools.
 
-**macOS only.** The Rust side uses AppKit/WebKit through `objc2`, Tauri's
-`macos-private-api`, AppleScript (`osascript`) for iTerm/Terminal, and macOS paths. Don't
-add Linux or Windows code paths, CI jobs or packaging.
+**macOS and Linux.** macOS keeps AppKit/WebKit through `objc2`, Tauri's
+`macos-private-api`, AppleScript (`osascript`) for iTerm/Terminal, and `~/Library` paths,
+behind `cfg(target_os = "macos")` or `platform/macos.rs`. Linux uses WebKitGTK, `xdg-open`,
+XDG paths and the installed terminal (`platform/linux.rs`). Don't add Windows code paths
+or pretend a macOS API exists there.
 
 ## Architecture
 
@@ -24,8 +26,8 @@ Tauri 2 (Rust) + React 19 + TypeScript + Tailwind v4 + SQLite (rusqlite, bundled
 - `src/`: presentation only. `lib/types.ts` mirrors the Rust models, `lib/api.ts` wraps
   `invoke`, `providers/index.ts` holds provider UI descriptors, `features/` holds views.
 - Bundle identifier `com.hoku.app` (never change it: the index location depends on it).
-  The index is `~/Library/Application Support/com.hoku.app/hub.sqlite`, outside the app
-  bundle.
+  The index is `~/Library/Application Support/com.hoku.app/hub.sqlite` on macOS and
+  `$XDG_DATA_HOME/com.hoku.app/hub.sqlite` on Linux, outside the app bundle.
 
 Details: [docs/architecture.md](docs/architecture.md),
 [docs/provider-discovery.md](docs/provider-discovery.md),

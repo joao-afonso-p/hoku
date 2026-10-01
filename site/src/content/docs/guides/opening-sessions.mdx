@@ -29,6 +29,15 @@ It never starts a second copy of a session that's already running. Two copies of
 - **Another desktop (Space).** If the session's window is on another desktop and macOS is set not to follow apps between desktops, Hoku shows how to change that. Open **System Settings → Desktop & Dock**, and under *Mission Control* turn on *When switching to an application, switch to a Space with open windows for the application*. It's the macOS default, and Hoku doesn't change it for you.
 - **The transcript is gone.** Claude Code deletes old transcripts after a while. Such sessions stay in Hoku as *Transcript no longer on disk*, drawn hollow, and can't be resumed.
 
+### On Linux
+
+**Go to terminal** does not use AppleScript, iTerm or Spaces.
+
+- A session that isn't running resumes with `claude --resume` in a new window of the terminal you pick in Settings (Automatic uses the first installed of GNOME Terminal, Console, Ptyxis, Konsole, Xfce Terminal, kitty, Alacritty, WezTerm, foot, xterm, then `xdg-terminal-exec`).
+- A session that is already running is brought forward only when `wmctrl` can see its window. Hoku still can't select the tab. If it can't raise the window, it tells you to go there yourself and does not start a second copy.
+- A background session that isn't already attached runs `claude attach` in a new window.
+- Codex and Claude links open with `xdg-open`, which only works when something on the system handles `codex://` or `claude://`. Otherwise a Claude chat with a web link opens in the browser, and a Codex thread id is copied to the clipboard.
+
 ## Codex Desktop
 
 **Open thread in Codex** opens `codex://threads/<id>` in Codex Desktop. If Codex Desktop isn't installed, Hoku copies the thread ID to your clipboard instead.

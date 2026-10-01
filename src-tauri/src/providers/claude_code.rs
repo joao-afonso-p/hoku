@@ -573,8 +573,11 @@ impl SessionAdapter for ClaudeCodeAdapter {
         let projects_dir = self.root.join("projects");
         if !projects_dir.is_dir() {
             return Ok(ScanOutcome::Unavailable(
-                "No Claude Code sessions were found on this Mac (~/.claude/projects is missing)."
-                    .into(),
+                format!(
+                    "No Claude Code sessions were found on {} (~/.claude/projects is missing).",
+                    crate::providers::computer()
+                )
+                .into(),
             ));
         }
         let live = read_registry(&self.root.join("sessions"));

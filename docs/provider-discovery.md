@@ -188,7 +188,9 @@ So manual add accepts a web URL, a `claude://` link or a bare UUID. All three no
 ### Cowork sessions (local agent mode) – discoverable
 
 `~/Library/Application Support/Claude/local-agent-mode-sessions/<account>/<org>/local_<uuid>.json`
-holds **structured JSON metadata** per Cowork session: `sessionId`, `title`, `initialMessage`,
+holds **structured JSON metadata** per Cowork session. On Linux the same tree is read from
+`~/.config/Claude/local-agent-mode-sessions` when that directory exists (also `Claude-3p` under
+XDG config, or the Flatpak config dir). The fields below are what was investigated on macOS: `sessionId`, `title`, `initialMessage`,
 `createdAt`, `lastActivityAt`, `isArchived`, `userSelectedFolders`, `model`, `accountName`,
 `emailAddress`, `cliSessionId`. Some keys hold large blobs (system
 prompts); the adapter reads only the fields listed.

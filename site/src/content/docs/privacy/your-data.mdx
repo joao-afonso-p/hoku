@@ -13,7 +13,13 @@ Hoku keeps everything in one SQLite database:
 ~/Library/Application Support/com.hoku.app/hub.sqlite
 ```
 
-The same folder can hold `hub.sqlite-wal` and `hub.sqlite-shm`, which SQLite uses while Hoku runs. **Settings → Privacy** shows the path.
+On Linux the same file is:
+
+```text
+~/.local/share/com.hoku.app/hub.sqlite
+```
+
+That is `$XDG_DATA_HOME/com.hoku.app/` when `XDG_DATA_HOME` is set. The same folder can hold `hub.sqlite-wal` and `hub.sqlite-shm`, which SQLite uses while Hoku runs. **Settings → Privacy** shows the path.
 
 The index is outside the app, so installing, updating or reinstalling Hoku never touches it. Provider data (`~/.claude`, `~/.codex`, Claude Desktop's folders) isn't in it, and nothing you do in Hoku changes that data.
 

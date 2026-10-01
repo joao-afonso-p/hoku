@@ -1,0 +1,25 @@
+{
+  "app": {
+    "macOSPrivateApi": false,
+    "enableGTKAppId": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Hoku",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 960,
+        "minHeight": 620,
+        "titleBarStyle": "Visible",
+        "hiddenTitle": false,
+        "decorations": true,
+        "backgroundColor": "#0b0c0f",
+        "center": true
+      }
+    ]
+  },
+  "bundle": {
+    "targets": ["deb"],
+    "longDescription": "Hoku is a local-first app that indexes your Claude Code, Codex, and Claude Desktop sessions read-only, so you can browse and search your AI work in one place."
+  }
+}

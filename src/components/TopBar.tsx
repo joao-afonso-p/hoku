@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { isLinuxHost } from "../lib/host";
 import { ACTIVITY_SEEN_KEY, focusProject, openOverlay, scan, toggleExpanded, toggleList, toggleResume } from "../app/actions";
 import { useVisibility, type SystemModel } from "../app/model";
 import { useHub } from "../app/store";
@@ -38,7 +39,7 @@ export function TopBar({ systems }: { systems: SystemModel[] }) {
   const focusRuntime = focused ? runtimeSummary(focused.runtime) : "";
 
   return (
-    <header data-tauri-drag-region className="absolute inset-x-0 top-0 z-30 flex h-[44px] items-center gap-3 pr-4 pl-[34px]">
+    <header data-tauri-drag-region className={`absolute inset-x-0 top-0 z-30 flex h-[44px] items-center gap-3 pr-4 ${isLinuxHost() ? "pl-3" : "pl-[34px]"}`}>
       <div data-tauri-drag-region className="flex min-w-0 flex-1 items-center gap-2">
         {focused ? (
           <>

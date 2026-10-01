@@ -514,7 +514,7 @@ fn png_body<'a>(request: &'a tauri::ipc::Request<'_>) -> HubResult<&'a [u8]> {
 /// Save a share card the user exported to ~/Downloads. Returns the file's path.
 #[tauri::command]
 pub fn save_recap_image(request: tauri::ipc::Request<'_>) -> HubResult<String> {
-    let dir = std::path::PathBuf::from(crate::association::home_dir()).join("Downloads");
+    let dir = crate::platform::downloads_dir();
     recap::save_png(&dir, png_body(&request)?).map(|p| p.to_string_lossy().into_owned())
 }
 
@@ -720,6 +720,11 @@ pub fn load_demo(state: Db) -> HubResult<()> {
 #[tauri::command]
 pub fn clear_demo(state: Db) -> HubResult<()> {
     Ok(db::clear_demo(&lock(&state))?)
+}
+
+#[tauri::command]
+pub fn host_info() -> crate::platform::HostInfo {
+    crate::platform::host_info()
 }
 
 #[tauri::command]
