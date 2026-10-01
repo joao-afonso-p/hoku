@@ -33,6 +33,13 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 regex = "1"
 libc = "0.2"
 
+# `macos-private-api` stays on this target table only. tauri-build's allowlist
+# check reads `[dependencies] tauri` and ignores target-specific features, then
+# requires the feature whenever the merged config has `macOSPrivateApi: true`.
+# That flag stays false in tauri.conf.json (Linux forces it false too) so
+# `cargo test` passes on both platforms and Linux does not enable the feature.
+# Cargo unions this dependency into macOS builds, which is what turns the
+# private API on. Do not add `tauri.macos.conf.json` with `macOSPrivateApi: true`.
 [target.'cfg(target_os = "macos")'.dependencies]
 tauri = { version = "2", features = ["macos-private-api"] }
 objc2 = "0.6"
