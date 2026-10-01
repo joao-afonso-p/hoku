@@ -14,9 +14,11 @@ to the exact conversation in its own app.
 > **Hoku does not replace Claude or Codex. It indexes and launches sessions in
 > their native tools.**
 
-**Platform:** macOS only. Releases are built for Apple Silicon Macs; on an Intel Mac,
-[build it from source](#running). Linux and Windows are not supported: opening sessions relies
-on AppleScript, iTerm/Terminal and macOS app bundles. Hoku is pre-1.0.
+**Platform:** macOS, and Linux when you [build it from source](#running). Releases are built
+for Apple Silicon Macs; on an Intel Mac, build from source. Windows is not supported.
+On macOS, opening a session uses AppleScript, iTerm or Terminal, and app bundles. On Linux
+it uses `xdg-open` and whatever terminal emulator is installed, and it cannot select a tab.
+Hoku is pre-1.0.
 
 ## Installing
 
@@ -83,7 +85,9 @@ covers verifying a download and what changes on update.
   a short runtime detail and metadata per session.
 - One opt-in exception: **AI drafts** in Project Resume, off by default, sent only when you
   click **Generate draft**, with a payload you inspect first.
-- Everything lives in `~/Library/Application Support/com.hoku.app/hub.sqlite`, on this Mac.
+- Everything lives in one SQLite file on this computer: `~/Library/Application Support/com.hoku.app/hub.sqlite`
+  on macOS, or `$XDG_DATA_HOME/com.hoku.app/hub.sqlite` (usually `~/.local/share/com.hoku.app/hub.sqlite`)
+  on Linux.
 
 Details: [How Hoku handles your data](https://joao-afonso-p.github.io/hoku/privacy/).
 
@@ -103,16 +107,22 @@ investigation behind each integration is in [docs/provider-discovery.md](docs/pr
 
 ## Running
 
-Requirements: macOS, Xcode Command Line Tools, Node 22.12+, pnpm 10, Rust (`rustup`).
+Requirements: Node 22.12+, pnpm 10, Rust (`rustup`). On macOS, Xcode Command Line Tools.
+On Linux, Tauri's WebKitGTK packages (`libwebkit2gtk-4.1-dev`, GTK 3, and the other
+libraries listed in [CONTRIBUTING.md](CONTRIBUTING.md)).
 
 ```bash
 pnpm install
 pnpm tauri dev          # run in development
-pnpm tauri build        # build Hoku.app → src-tauri/target/release/bundle/macos/
+pnpm tauri build        # macOS: Hoku.app → src-tauri/target/release/bundle/macos/
+                        # Linux: a .deb → src-tauri/target/release/bundle/deb/
 pnpm test               # layout, visibility, runtime status, filter, search tests (vitest)
 cd src-tauri && cargo test   # parsers, merge rules, runtime mapping + watchdog, launch safety (Rust)
 cd src-tauri && cargo test probe_this_mac -- --ignored --nocapture   # runtime state of real sessions, in memory
 ```
+
+`pnpm install:local` and the DMG installer are macOS-only. On Linux, install the `.deb`
+from `pnpm tauri build`, or run the debug app with `pnpm tauri dev`.
 
 ### Installing locally (optional)
 

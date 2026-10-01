@@ -51,10 +51,12 @@ you're credited in the advisory unless you'd rather not be.
   CSP in `src-tauri/tauri.conf.json` restricts the webview to its own assets and Tauri IPC;
   `devCsp` also allows the Vite dev-server websocket (`ws://localhost:1420`).
 - **Provider data is read-only.** Claude Code (`~/.claude`), Codex (`~/.codex`) and
-  Claude Desktop (`~/Library/Application Support/Claude/...`) data is read, never
+  Claude Desktop (`~/Library/Application Support/Claude/...` on macOS,
+  `~/.config/Claude/...` on Linux) data is read, never
   written. Foreign SQLite databases are opened with `SQLITE_OPEN_READ_ONLY` and
-  `PRAGMA query_only`. The only database Hoku writes is its own
-  `~/Library/Application Support/com.hoku.app/hub.sqlite`.
+  `PRAGMA query_only`. The only database Hoku writes is its own index:
+  `~/Library/Application Support/com.hoku.app/hub.sqlite` on macOS, or
+  `$XDG_DATA_HOME/com.hoku.app/hub.sqlite` on Linux.
 - **No credentials.** Token and credential files are never opened. Account state comes
   only from `claude auth status` and `codex login status`, and only non-secret fields
   are kept.
@@ -65,11 +67,13 @@ you're credited in the advisory unless you'd rather not be.
   stripped before storage.
 - **Launching.** `src-tauri/src/launch.rs` validates session ids
   (`^[A-Za-z0-9][A-Za-z0-9_-]{5,79}$`, so an id can't be a flag), requires existing absolute directories, shell-quotes paths
-  and escapes AppleScript strings. `open` is limited to `claude://`, `codex://`,
-  `https://claude.ai/` and `https://chatgpt.com/`.
-- **macOS Automation permission.** Switching to or opening a Claude Code terminal uses
+  and escapes AppleScript strings. `open` / `xdg-open` is limited to `claude://`, `codex://`,
+  `https://claude.ai/` and `https://chatgpt.com/`. On Linux the resumed command is a single
+  `bash -lc` argument.
+- **macOS Automation permission.** Switching to or opening a Claude Code terminal on macOS uses
   AppleScript to control iTerm or Terminal. macOS asks for Automation permission once,
-  and you can revoke it in System Settings → Privacy & Security → Automation.
+  and you can revoke it in System Settings → Privacy & Security → Automation. Linux starts
+  the installed terminal emulator directly and does not use AppleScript.
 - **Releases.** Release builds are ad-hoc signed and not notarized by Apple (Hoku isn't in
   the paid Apple Developer Program). Each release publishes `SHA256SUMS.txt` and a GitHub
   build provenance attestation (`gh attestation verify <dmg> --repo joao-afonso-p/hoku`).

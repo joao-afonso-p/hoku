@@ -1,7 +1,7 @@
 [package]
 name = "ai-session-hub"
 version = "0.2.1"
-description = "Hoku: a local-first macOS app that indexes Claude Code, Codex, and Claude Desktop sessions read-only"
+description = "Hoku: a local-first app that indexes Claude Code, Codex, and Claude Desktop sessions read-only"
 authors = ["João Afonso"]
 license = "MIT"
 repository = "https://github.com/joao-afonso-p/hoku"
@@ -24,7 +24,7 @@ path = "src/main.rs"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["macos-private-api"] }
+tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.40", features = ["bundled"] }
@@ -34,6 +34,7 @@ regex = "1"
 libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+tauri = { version = "2", features = ["macos-private-api"] }
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSArray", "NSBundle", "NSData", "NSDictionary", "NSEnumerator", "NSError", "NSString", "NSValue"] }
 objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSBitmapImageRep", "NSDockTile", "NSGraphics", "NSImage", "NSImageRep", "NSPasteboard", "NSResponder", "NSRunningApplication"] }

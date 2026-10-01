@@ -1,10 +1,8 @@
 # Continuous integration for Hoku.
 #
-# Platform support: Hoku is a macOS-only app (it links AppKit/WebKit via objc2 and
-# uses Tauri's macos-private-api). There are intentionally NO Linux or Windows
-# build/test jobs. Ubuntu runners are used only for platform-independent checks
-# (frontend typecheck/tests/build and `cargo fmt`); everything that compiles the
-# Rust crate runs on macOS.
+# Platform support: macOS is the release platform (AppKit/WebKit via objc2,
+# macos-private-api, DMG). Linux is built and tested here too (WebKitGTK, deb).
+# There is no Windows job. Frontend checks and `cargo fmt` stay on Ubuntu.
 #
 # This workflow only verifies the code. It does not sign, notarize, publish, or
 # upload any release artifacts.
@@ -113,3 +111,57 @@ jobs:
       # signed or notarized, and the bundle is not uploaded.
       - name: Tauri build (debug, unsigned .app)
         run: pnpm tauri build --debug --bundles app --ci
+
+  linux:
+    name: Rust tests + Tauri build (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install Tauri Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            build-essential \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            pkg-config
+
+      # Tests marked #[ignore] (e.g. `probe_this_mac`) stay ignored here on purpose.
+      - name: cargo test
+        working-directory: src-tauri
+        run: cargo test --locked
+
+      - name: cargo clippy (non-blocking)
+        working-directory: src-tauri
+        continue-on-error: true
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Unsigned debug .deb: proves the frontend and the Rust app compile and
+      # bundle on Linux. The debug profile reuses crates already built by
+      # `cargo test`. The package is not uploaded.
+      - name: Tauri build (debug, .deb)
+        run: pnpm tauri build --debug --bundles deb --ci

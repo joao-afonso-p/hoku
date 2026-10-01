@@ -7,8 +7,8 @@ Hoku is pre-1.0. These are the current limits, most of them set by what each pro
 
 ## Platform and install
 
-- **macOS only.** Opening sessions relies on AppleScript, iTerm or Terminal, and macOS app links. There are no Windows or Linux versions.
-- **Apple Silicon releases only.** On an Intel Mac, [build from source](https://github.com/joao-afonso-p/hoku#running).
+- **macOS and Linux.** macOS releases are DMGs. Linux is a build from source (a `.deb`); it opens URLs with `xdg-open` and Claude Code in a new terminal window. It cannot select a terminal tab, move windows between desktops, or badge a Dock icon. Windows is not supported.
+- **Published releases are Apple Silicon Macs.** On an Intel Mac or on Linux, [build from source](https://github.com/joao-afonso-p/hoku#running).
 - **Not notarized by Apple.** A DMG you download needs one **Open Anyway** per version. The install script avoids that prompt by checking the download itself. See [Install and update](/hoku/start/install/).
 - **No automatic updates.** Run the install command again, or download the new DMG.
 - **Automation permission is asked again after each update**, because the ad-hoc signature has no fixed developer identity.

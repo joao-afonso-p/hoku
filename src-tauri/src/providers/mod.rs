@@ -15,7 +15,7 @@ use std::collections::HashMap;
 
 pub enum ScanOutcome {
     Found(Vec<DiscoveredSession>),
-    /// The provider's local data isn't present on this Mac. Not an error.
+    /// The provider's local data isn't present on this computer. Not an error.
     Unavailable(String),
 }
 
@@ -140,14 +140,23 @@ impl RuntimeCapabilities {
     }
 }
 
+/// "this Mac" on macOS, "this computer" elsewhere. User-facing copy only.
+pub fn computer() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "this Mac"
+    } else {
+        "this computer"
+    }
+}
+
 pub fn all_adapters() -> Vec<Box<dyn SessionAdapter>> {
     let home = std::path::PathBuf::from(crate::association::home_dir());
     vec![
         Box::new(claude_code::ClaudeCodeAdapter::new(home.join(".claude"))),
         Box::new(codex::CodexAdapter::new(home.join(".codex"))),
-        Box::new(claude_desktop::CoworkAdapter::new(home.join(
-            "Library/Application Support/Claude/local-agent-mode-sessions",
-        ))),
+        Box::new(claude_desktop::CoworkAdapter::new(
+            crate::platform::cowork_sessions_dir(&home),
+        )),
     ]
 }
 

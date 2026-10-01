@@ -204,6 +204,9 @@ running, and nothing is pushed from anywhere. Unbundled builds (`pnpm tauri dev`
 notification center, so only the badge and bounce work there. Settings says "This build can't
 post notifications".
 
+On Linux there is no Dock. Banners go through `notify-send` when it is installed, and they
+cannot be withdrawn or clicked back into a session. Badge and bounce settings are hidden.
+
 **Threads.** The decision (`Tracker::step`) is pure and runs on the monitor thread with no lock
 held while waiting on the UI. Every AppKit and UserNotifications call is dispatched to the
 main thread. The notification delegate may be called on any thread and only records the

@@ -3,6 +3,7 @@ import { closeOverlay, fail, reload, toast } from "../../app/actions";
 import { useHub } from "../../app/store";
 import { Sheet } from "../../components/Sheet";
 import { api } from "../../lib/api";
+import { here } from "../../lib/host";
 import { tildify } from "../../lib/paths";
 import type { ProjectSuggestion, ProviderScanResult } from "../../lib/types";
 import { PROVIDERS } from "../../providers";
@@ -20,8 +21,8 @@ export function ScanSheet() {
 
   return (
     <Sheet
-      title={scanning ? "Scanning this Mac…" : "Scan complete"}
-      subtitle={scanning ? "Everything is read-only. Nothing leaves this Mac." : report ? `Finished ${new Date(report.finishedAt).toLocaleTimeString()}` : undefined}
+      title={scanning ? `Scanning ${here()}…` : "Scan complete"}
+      subtitle={scanning ? `Everything is read-only. Nothing leaves ${here()}.` : report ? `Finished ${new Date(report.finishedAt).toLocaleTimeString()}` : undefined}
       width={520}
       footer={
         <button className="btn btn-primary" disabled={scanning} onClick={closeOverlay}>
@@ -66,7 +67,7 @@ function ResultRow({ r }: { r: ProviderScanResult }) {
       </>
     );
   else if (r.status === "manual-only") summary = <span className="text-ink-3">Manual only</span>;
-  else if (r.status === "unavailable") summary = <span className="text-ink-3">Not found on this Mac</span>;
+  else if (r.status === "unavailable") summary = <span className="text-ink-3">Not found on {here()}</span>;
   else summary = <span className="text-danger">Couldn’t scan</span>;
 
   return (

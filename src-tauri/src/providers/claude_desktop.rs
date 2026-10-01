@@ -228,9 +228,10 @@ impl SessionAdapter for CoworkAdapter {
 
     fn scan(&self) -> Result<ScanOutcome, HubError> {
         if !self.root.is_dir() {
-            return Ok(ScanOutcome::Unavailable(
-                "Claude Desktop has no Cowork sessions on this Mac.".into(),
-            ));
+            return Ok(ScanOutcome::Unavailable(format!(
+                "Claude Desktop has no Cowork sessions on {}.",
+                super::computer()
+            )));
         }
         let now = now_ms();
         let found = session_files(&self.root)

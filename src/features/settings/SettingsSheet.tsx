@@ -8,15 +8,16 @@ import { AMBIENCE_KEY, ambienceFromSettings, type Ambience } from "../constellat
 import { useHub } from "../../app/store";
 import { Sheet } from "../../components/Sheet";
 import { api } from "../../lib/api";
+import { here, isLinuxHost } from "../../lib/host";
 import { tildify } from "../../lib/paths";
-import type { DraftProviderStatus, NotificationStatus } from "../../lib/types";
+import type { DraftProviderStatus, HostInfo, NotificationStatus } from "../../lib/types";
 import { AI_DRAFTS_KEY } from "../resume/ResumeDrawer";
 import { HOW_IT_RUNS, NEVER_SENT, SENT_CATEGORIES } from "../resume/privacy";
 // The release workflow keeps package.json, tauri.conf.json and Cargo.toml on one version.
 import { version } from "../../../package.json";
 
-const TERMINALS = [
-  { id: "auto", label: "Automatic", hint: "iTerm if installed" },
+const MAC_TERMINALS = [
+  { id: "auto", label: "Automatic" },
   { id: "iterm", label: "iTerm" },
   { id: "terminal", label: "Terminal" },
 ];
@@ -25,11 +26,14 @@ export function SettingsSheet() {
   const settings = useHub((s) => s.data.settings);
   const demoCount = useHub((s) => s.data.sessions.filter((x) => x.source === "demo").length);
   const [dbPath, setDbPath] = useState<string | null>(null);
+  const [host, setHost] = useState<HostInfo | null>(null);
   const terminal = (settings.terminal as string) ?? "auto";
+  const linux = host?.os === "linux" || (host == null && isLinuxHost());
   const v = useVisibility();
 
   useEffect(() => {
     void api.databasePath().then(setDbPath).catch(() => setDbPath(null));
+    void api.hostInfo().then(setHost).catch(() => setHost(null));
   }, []);
 
   const ambience = ambienceFromSettings(settings);
@@ -109,27 +113,14 @@ export function SettingsSheet() {
 
         <NeedsYouAlerts />
 
-        <section>
-          <div className="eyebrow mb-2">Claude Code opens in</div>
-          <div className="grid grid-cols-3 gap-1 rounded-[9px] border border-line bg-white/[0.02] p-1">
-            {TERMINALS.map((t) => (
-              <button key={t.id} onClick={() => void setTerminal(t.id)} className={`h-8 rounded-[6px] text-[12.5px] ${terminal === t.id ? "bg-white/[0.08] text-ink" : "text-ink-3 hover:text-ink-2"}`}>
-                {t.label}
-              </button>
-            ))}
-          </div>
-          <p className="mt-1.5 text-[11.5px] leading-relaxed text-ink-4">
-            Background sessions are attached with <span className="font-mono">claude attach</span>. Sessions already open in a terminal are brought forward. Everything else resumes with{" "}
-            <span className="font-mono">claude --resume</span>. The first time, macOS asks you to allow Hoku to control your terminal.
-          </p>
-        </section>
+        <TerminalSection linux={linux} host={host} terminal={terminal} setTerminal={setTerminal} />
 
         <AiDraftsSection />
 
         <section>
           <div className="eyebrow mb-2">Privacy</div>
           <ul className="space-y-1 text-[12px] leading-relaxed text-ink-3">
-            <li>Everything stays on this Mac. No account, no cloud, no analytics.</li>
+            <li>Everything stays on {here()}. No account, no cloud, no analytics.</li>
             <li>Claude and Codex data is read-only. Their files and databases are never modified.</li>
             <li>No passwords or tokens are read or stored. Sign-in stays with each provider’s app.</li>
             <li>Only titles and a short first-prompt preview are indexed, never full transcripts.</li>
@@ -194,6 +185,50 @@ export function SettingsSheet() {
   );
 }
 
+function TerminalSection({
+  linux,
+  host,
+  terminal,
+  setTerminal,
+}: {
+  linux: boolean;
+  host: HostInfo | null;
+  terminal: string;
+  setTerminal: (id: string) => Promise<void>;
+}) {
+  const choices = linux
+    ? (host?.terminals ?? [{ id: "auto", label: "Automatic", installed: true }]).filter((t) => t.id === "auto" || t.installed)
+    : MAC_TERMINALS;
+  const selected = choices.some((t) => t.id === terminal) ? terminal : "auto";
+  const none = linux && host != null && !host.terminals.some((t) => t.installed && t.id !== "auto");
+  return (
+    <section>
+      <div className="eyebrow mb-2">Claude Code opens in</div>
+      <div className={`gap-1 rounded-[9px] border border-line bg-white/[0.02] p-1 ${linux ? "flex flex-wrap" : "grid grid-cols-3"}`}>
+        {choices.map((t) => (
+          <button key={t.id} onClick={() => void setTerminal(t.id)} className={`h-8 rounded-[6px] px-2 text-[12.5px] ${linux ? "min-w-[7.5rem] flex-1" : ""} ${selected === t.id ? "bg-white/[0.08] text-ink" : "text-ink-3 hover:text-ink-2"}`}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <p className="mt-1.5 text-[11.5px] leading-relaxed text-ink-4">
+        {none ? (
+          <>No supported terminal emulator was found. Install GNOME Terminal, Konsole, kitty, Alacritty, or xterm, then resume with <span className="font-mono">claude --resume</span>.</>
+        ) : linux ? (
+          <>
+            Background sessions are attached with <span className="font-mono">claude attach</span> in a new terminal window. Hoku can bring a window forward when the desktop allows it, and it can’t select a tab. Everything else resumes with <span className="font-mono">claude --resume</span>.
+          </>
+        ) : (
+          <>
+            Background sessions are attached with <span className="font-mono">claude attach</span>. Sessions already open in a terminal are brought forward. Everything else resumes with{" "}
+            <span className="font-mono">claude --resume</span>. The first time, macOS asks you to allow Hoku to control your terminal.
+          </>
+        )}
+      </p>
+    </section>
+  );
+}
+
 function NeedsYouAlerts() {
   const settings = useHub((s) => s.data.settings);
   const prefs = notificationPrefs(settings);
@@ -219,13 +254,15 @@ function NeedsYouAlerts() {
   };
 
   const allowed = status?.permission === "authorized" || status?.permission === "provisional";
+  const showDock = status ? status.dock : !isLinuxHost();
   const openSettings = () => void api.openNotificationSettings().catch(fail);
   const note = (() => {
     if (!status) return null;
+    if (status.permission === "unavailable" && !status.dock) return { text: "Desktop notifications need notify-send, which isn’t installed.", fix: false };
     if (status.permission === "unavailable") return { text: "This build can’t post notifications. The installed Hoku app can.", fix: false };
     if (status.permission === "denied" && (prefs.banners || prefs.badge)) return { text: "Notifications for Hoku are turned off in macOS.", fix: true };
     if (prefs.banners && allowed && !status.alerts) return { text: "macOS is set not to show Hoku’s alerts.", fix: true };
-    if (prefs.badge && allowed && !status.badges) return { text: "macOS is set not to badge Hoku’s icon.", fix: true };
+    if (showDock && prefs.badge && allowed && !status.badges) return { text: "macOS is set not to badge Hoku’s icon.", fix: true };
     if (status.permission === "not-determined" && !prefs.banners) return { text: "macOS asks for permission when you turn notifications on.", fix: false };
     return null;
   })();
@@ -234,8 +271,8 @@ function NeedsYouAlerts() {
     <section>
       <div className="eyebrow mb-2">Needs You alerts</div>
       <Toggle label="Notify me when a session needs me" checked={prefs.banners} onChange={(x) => void set("banners", x)} />
-      <Toggle label="Show the Needs You count on the Dock icon" checked={prefs.badge} onChange={(x) => void set("badge", x)} />
-      <Toggle label="Bounce the Dock icon once" checked={prefs.bounce} onChange={(x) => void set("bounce", x)} />
+      {showDock && <Toggle label="Show the Needs You count on the Dock icon" checked={prefs.badge} onChange={(x) => void set("badge", x)} />}
+      {showDock && <Toggle label="Bounce the Dock icon once" checked={prefs.bounce} onChange={(x) => void set("bounce", x)} />}
       {note && (
         <div className="mt-2 flex items-center justify-between gap-3 rounded-[8px] border border-line bg-white/[0.02] px-2.5 py-1.5 text-[11.5px] text-ink-3">
           <span>{note.text}</span>
@@ -247,7 +284,7 @@ function NeedsYouAlerts() {
         </div>
       )}
       <p className="mt-1.5 text-[11.5px] leading-relaxed text-ink-4">
-        Hoku alerts once when a session starts waiting for your permission, answer or sign-in, and only while it’s running and its window isn’t in front. Alerts name the project and the kind of request, never the prompt, session title or files. Clicking one shows that session in Hoku; nothing is opened or sent until you choose to open it. Ready sessions and ordinary errors don’t alert. Focus and your macOS notification settings still apply.
+        Hoku alerts once when a session starts waiting for your permission, answer or sign-in, and only while it’s running and its window isn’t in front. Alerts name the project and the kind of request, never the prompt, session title or files. {showDock ? "Clicking one shows that session in Hoku; nothing is opened or sent until you choose to open it." : "On Linux, clicking the desktop notification doesn’t open the session. Open Hoku and use Needs You."} Ready sessions and ordinary errors don’t alert. {showDock ? "Focus and your macOS notification settings still apply." : "Banners use notify-send when it is installed. There is no Dock badge or bounce."}
       </p>
     </section>
   );

@@ -259,6 +259,7 @@ pub struct Target {
 }
 
 /// Parse a banner id back into a destination. Ids Hoku didn't post are ignored.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn target_for(identifier: &str) -> Option<Target> {
     let rest = identifier.strip_prefix(ID_PREFIX)?;
     let valid = !rest.is_empty()
@@ -280,6 +281,7 @@ pub fn take_target() -> Option<Target> {
 
 /// A banner was clicked: bring the window forward (only now, on the user's click) and tell the
 /// UI to go to the session. Nothing is opened in the provider until the user chooses to.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn clicked(identifier: &str) {
     use tauri::{Emitter, Manager};
     let Some(target) = target_for(identifier) else {
@@ -358,6 +360,8 @@ pub struct NotificationStatus {
     pub alerts: bool,
     /// "Badge application icon" is on for Hoku in System Settings.
     pub badges: bool,
+    /// Dock badge and bounce exist on this operating system.
+    pub dock: bool,
 }
 
 impl NotificationStatus {
@@ -365,6 +369,7 @@ impl NotificationStatus {
         permission: "unavailable",
         alerts: false,
         badges: false,
+        dock: false,
     };
 }
 
@@ -570,6 +575,7 @@ mod native {
             },
             alerts: alerts == UNNotificationSetting::Enabled,
             badges: badges == UNNotificationSetting::Enabled,
+            dock: true,
         }
     }
 
@@ -592,7 +598,56 @@ mod native {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
+mod native {
+    use super::{NotificationStatus, Plan};
+    use std::process::{Command, Stdio};
+
+    pub fn install() {}
+
+    pub fn apply(plan: &Plan) {
+        let Some(bin) = notify_send() else {
+            return;
+        };
+        for banner in &plan.banners {
+            // notify-send has no delivered-notification id Hoku can withdraw later.
+            let _ = Command::new(&bin)
+                .args(["--app-name=Hoku", &banner.title, &banner.body])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn();
+        }
+    }
+
+    pub fn status() -> NotificationStatus {
+        if notify_send().is_some() {
+            NotificationStatus {
+                permission: "authorized",
+                alerts: true,
+                badges: false,
+                dock: false,
+            }
+        } else {
+            NotificationStatus::UNAVAILABLE
+        }
+    }
+
+    pub fn request() {}
+
+    fn notify_send() -> Option<std::path::PathBuf> {
+        let mut dirs = Vec::new();
+        if let Some(path) = std::env::var_os("PATH") {
+            dirs.extend(std::env::split_paths(&path));
+        }
+        dirs.push(std::path::PathBuf::from("/usr/bin"));
+        dirs.into_iter()
+            .map(|d| d.join("notify-send"))
+            .find(|p| p.is_file())
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 mod native {
     use super::{NotificationStatus, Plan};
     pub fn install() {}

@@ -81,6 +81,43 @@ pub fn home_dir() -> String {
     std::env::var("HOME").unwrap_or_else(|_| "/".into())
 }
 
+/// Home, app-support folders, Codex scratch space and Downloads are not projects.
+fn skip_anchor(anchor: &str, home: &str) -> bool {
+    if anchor == home
+        || anchor == "/"
+        || anchor.contains("/Library/")
+        || anchor.contains("/Documents/Codex/")
+        || anchor.contains("/Downloads/")
+    {
+        return true;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let mut roots = vec![
+            format!("{home}/.config"),
+            format!("{home}/.local"),
+            format!("{home}/.var/app"),
+        ];
+        if let Ok(path) = std::env::var("XDG_CONFIG_HOME") {
+            if path.starts_with('/') {
+                roots.push(path);
+            }
+        }
+        if let Ok(path) = std::env::var("XDG_DATA_HOME") {
+            if path.starts_with('/') {
+                roots.push(path);
+            }
+        }
+        if roots
+            .iter()
+            .any(|root| anchor == root || anchor.starts_with(&format!("{root}/")))
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// Turn a path's last component into a readable project name: `personal-website` → `Personal Website`.
 pub fn humanize_dir_name(path: &str) -> String {
     let base = Path::new(path)
@@ -152,12 +189,7 @@ pub fn suggest_projects(
         if let Some(anchor) = anchor_path(cwd.as_deref(), repo.as_deref()) {
             // The home directory and app-support folders are not meaningful projects.
             // Codex's per-chat scratch folders and Downloads are not projects.
-            if anchor == home
-                || anchor.contains("/Library/")
-                || anchor == "/"
-                || anchor.contains("/Documents/Codex/")
-                || anchor.contains("/Downloads/")
-            {
+            if skip_anchor(&anchor, &home) {
                 continue;
             }
             if existing_roots.iter().any(|r| is_within(&anchor, r)) {
@@ -269,5 +301,15 @@ mod tests {
         assert_eq!(s[0].name, "Evergreen");
         assert_eq!(s[0].session_count, 2);
         assert_eq!(s[1].root_path, "/x/Website");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn xdg_dirs_are_not_projects() {
+        let home = home_dir();
+        let unassigned = vec![(Some(format!("{home}/.config/Claude")), None)];
+        assert!(suggest_projects(&unassigned, &[], &[]).is_empty());
+        let unassigned = vec![(Some(format!("{home}/code/app")), None)];
+        assert_eq!(suggest_projects(&unassigned, &[], &[]).len(), 1);
     }
 }

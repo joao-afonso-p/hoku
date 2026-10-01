@@ -39,8 +39,9 @@
 
 ## Tested on
 
-- macOS version:
+- macOS version (if you changed macOS paths):
 - Chip (Apple Silicon or Intel):
+- Linux distribution (if you changed Linux paths):
 - Provider app/CLI versions, if relevant:
 
 ## Notes for the reviewer

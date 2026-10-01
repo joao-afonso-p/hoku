@@ -1,5 +1,10 @@
 //! Returning to sessions in their native tools. Every value that reaches a shell or
 //! AppleScript is validated and escaped here.
+//!
+//! macOS terminal control stays in this file. On Linux those items are only reached from
+//! tests (the live path is `open_claude_code` below and `platform`), so the build allows
+//! them to look unused.
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
 use crate::models::{HubError, HubResult, Provider, Session};
 use crate::providers::claude_code::read_registry;
@@ -129,23 +134,26 @@ pub fn activate_app(_: &str) -> bool {
 }
 #[cfg(not(target_os = "macos"))]
 pub fn is_active(_: &str) -> bool {
-    true
+    false
 }
 
-/// Fallback when in-process activation isn't possible.
+/// Fallback when in-process activation isn't possible. Bundle ids are a macOS concept;
+/// on Linux the terminal process is started directly and this is a no-op.
 pub fn open_by_bundle(bundle_id: &str) {
-    let _ = Command::new("/usr/bin/open")
-        .args(["-b", bundle_id])
-        .status();
+    #[cfg(target_os = "macos")]
+    {
+        let _ = Command::new("/usr/bin/open")
+            .args(["-b", bundle_id])
+            .status();
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = bundle_id;
+    }
 }
 
 pub fn iterm_installed() -> bool {
-    Path::new("/Applications/iTerm.app").exists()
-        || Path::new(&format!(
-            "{}/Applications/iTerm.app",
-            crate::association::home_dir()
-        ))
-        .exists()
+    crate::platform::iterm_installed()
 }
 
 /// `pref` is the user's setting: "auto" | "iterm" | "terminal".
@@ -261,34 +269,18 @@ pub fn open_url(url: &str) -> Result<(), String> {
     if !allowed_url(url) {
         return Err(format!("refusing to open unexpected URL: {url}"));
     }
-    run(Command::new("/usr/bin/open").arg(url)).map(|_| ())
+    crate::platform::open_url(url)
 }
 
 pub fn reveal(path: &str) -> HubResult<()> {
     if !Path::new(path).exists() {
         return Err(HubError::with_detail("That folder no longer exists.", path));
     }
-    run(Command::new("/usr/bin/open").arg("-R").arg(path))
-        .map(|_| ())
-        .map_err(|e| HubError::with_detail("Finder couldn't reveal that folder.", e))
+    crate::platform::reveal(path).map_err(|e| HubError::with_detail(e, path))
 }
 
 pub fn copy_to_clipboard(text: &str) -> HubResult<()> {
-    use std::io::Write;
-    let mut child = Command::new("/usr/bin/pbcopy")
-        .stdin(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| HubError::with_detail("The clipboard isn't available.", e))?;
-    child
-        .stdin
-        .take()
-        .expect("piped")
-        .write_all(text.as_bytes())
-        .map_err(|e| HubError::with_detail("Couldn't copy.", e))?;
-    child
-        .wait()
-        .map_err(|e| HubError::with_detail("Couldn't copy.", e))?;
-    Ok(())
+    crate::platform::copy_text(text).map_err(|e| HubError::new(e))
 }
 
 pub fn app_installed(bundle_path: &str) -> bool {
@@ -344,6 +336,7 @@ pub fn run_in_terminal(app: TerminalApp, command_line: &str) -> HubResult<&'stat
     })
 }
 
+#[cfg(target_os = "macos")]
 fn tty_of(pid: i64) -> Option<String> {
     let out = run(Command::new("/bin/ps").args(["-o", "tty=", "-p", &pid.to_string()])).ok()?;
     let t = out.trim();
@@ -468,6 +461,7 @@ pub fn host_in_process_list(ps: &str, pid: i64) -> Option<HostApp> {
 }
 
 /// Which app hosts `pid`, from one snapshot of the process table.
+#[cfg(target_os = "macos")]
 fn hosting_app(pid: i64) -> Option<HostApp> {
     let ps = run(Command::new("/bin/ps").args(["-axo", "pid=,ppid=,comm="])).ok()?;
     host_in_process_list(&ps, pid)
@@ -475,6 +469,7 @@ fn hosting_app(pid: i64) -> Option<HostApp> {
 
 /// Select the tab hosting `tty`. Returns the id of the window holding it (for iTerm and
 /// Terminal this is the macOS window number), or None if no tab has that tty.
+#[cfg(target_os = "macos")]
 fn focus_tty(app: TerminalApp, tty: &str) -> Result<Option<i64>, String> {
     let t = applescript_string(tty);
     let script = match app {
@@ -594,6 +589,7 @@ pub fn app_window_on_current_space(_: &str) -> bool {
 }
 
 /// A restored window takes a moment to land (the un-minimize animation). Poll, don't guess.
+#[cfg(target_os = "macos")]
 fn wait_until_on_current_space(window_id: i64, timeout: std::time::Duration) -> bool {
     let start = std::time::Instant::now();
     loop {
@@ -609,33 +605,24 @@ fn wait_until_on_current_space(window_id: i64, timeout: std::time::Duration) -> 
 
 /// System Settings → Desktop & Dock → Mission Control → "When switching to an application,
 /// switch to a Space with open windows for the application". macOS's default is on.
+/// On Linux there is no equivalent switch; the platform module reports that directly.
 pub fn spaces_switch_on_activate() -> bool {
-    match Command::new("/usr/bin/defaults")
-        .args(["read", "-g", "AppleSpacesSwitchOnActivate"])
-        .output()
-    {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim() != "0",
-        _ => true,
-    }
+    crate::platform::spaces_switch_on_activate()
 }
 
 pub fn open_spaces_settings() -> Result<(), String> {
-    run(Command::new("/usr/bin/open")
-        .arg("x-apple.systempreferences:com.apple.Desktop-Settings.extension"))
-    .map(|_| ())
+    crate::platform::open_spaces_settings()
 }
 
-/// Hoku's own pane in System Settings → Notifications (a fixed URL, no input).
+/// Hoku's own pane in System Settings → Notifications on macOS (a fixed URL, no input).
 pub fn open_notification_settings() -> Result<(), String> {
-    run(Command::new("/usr/bin/open").arg(
-        "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=com.hoku.app",
-    ))
-    .map(|_| ())
+    crate::platform::open_notification_settings()
 }
 
 /// Bring a terminal window to the current Space: macOS restores a minimized window onto the
 /// Space you're on. Used only when the window is on another desktop and macOS is set not to
 /// switch desktops on activation (System Settings → Desktop & Dock → Mission Control).
+#[cfg(target_os = "macos")]
 fn bring_window_here(app: TerminalApp, window_id: i64) -> Result<(), String> {
     let script = format!(
         "tell application \"{name}\"
@@ -668,6 +655,7 @@ pub enum Shown {
 
 /// Go to a session in a host without scriptable terminal tabs (VS Code): the caller activates
 /// the app, which brings its windows forward. Nothing is started.
+#[cfg(target_os = "macos")]
 fn focus_host_app(host: HostApp, shown: Shown, ctx: &LaunchContext) -> OpenResult {
     let elsewhere = !ctx.hoku_fullscreen
         && !spaces_switch_on_activate()
@@ -736,7 +724,7 @@ fn open_claude(session: &Session) -> HubResult<OpenResult> {
         .deep_link
         .as_deref()
         .ok_or_else(|| HubError::new("This Claude session has no link to open."))?;
-    if !app_installed("/Applications/Claude.app") {
+    if !crate::platform::claude_desktop_installed() {
         if let Some(web) = session.source_url.as_deref() {
             open_url(web).map_err(|e| {
                 HubError::with_detail("The conversation couldn't be opened in your browser.", e)
@@ -746,7 +734,10 @@ fn open_claude(session: &Session) -> HubResult<OpenResult> {
                 "Claude Desktop isn't installed. Opened the conversation on claude.ai instead.",
             );
         }
-        return Err(HubError::new("Claude Desktop isn't installed on this Mac."));
+        return Err(HubError::new(format!(
+            "Claude Desktop isn't installed on {where}.",
+            where = machine()
+        )));
     }
     open_url(link).map_err(|e| {
         HubError::with_detail(
@@ -759,10 +750,10 @@ fn open_claude(session: &Session) -> HubResult<OpenResult> {
 
 fn open_codex(session: &Session) -> HubResult<OpenResult> {
     let id = validate_id(session.external_id.as_deref().unwrap_or(""))?;
-    if !app_installed("/Applications/ChatGPT.app") && !app_installed("/Applications/Codex.app") {
+    if !crate::platform::codex_desktop_installed() {
         copy_to_clipboard(id)?;
         return Err(HubError::new(
-            "Codex Desktop isn't installed. The thread ID was copied to your clipboard.",
+            "Codex Desktop isn't installed, so this thread can't be opened with a codex:// link. The thread ID was copied to your clipboard.",
         ));
     }
     let link = format!("codex://threads/{id}");
@@ -773,6 +764,7 @@ fn open_codex(session: &Session) -> HubResult<OpenResult> {
 /// Switch to the app hosting a `claude` client of a background session (pid and tty from `ps`):
 /// VS Code is brought forward, an iTerm or Terminal tab is selected. None when its host can't be
 /// reached (tmux, Warp, a closed tab), so the caller attaches in a new tab instead.
+#[cfg(target_os = "macos")]
 fn go_to_client(pid: i64, tty: &str, shown: Shown, ctx: &LaunchContext) -> Option<OpenResult> {
     let host = hosting_app(pid)?;
     let Some(app) = host.terminal() else {
@@ -797,6 +789,15 @@ fn go_to_client(pid: i64, tty: &str, shown: Shown, ctx: &LaunchContext) -> Optio
     })
 }
 
+fn machine() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "this Mac"
+    } else {
+        "this computer"
+    }
+}
+
+#[cfg(target_os = "macos")]
 fn open_claude_code(session: &Session, ctx: &LaunchContext) -> HubResult<OpenResult> {
     let id = validate_id(session.external_id.as_deref().unwrap_or(""))?;
     let claude = ctx
@@ -909,6 +910,114 @@ fn open_claude_code(session: &Session, ctx: &LaunchContext) -> HubResult<OpenRes
         "resume",
         format!("Resumed in a new {} {place}", terminal.name()),
     )
+}
+
+/// Linux can't select a terminal tab. A live interactive session is raised when `wmctrl`
+/// can see its window; otherwise Hoku refuses to start a second copy. A session that is
+/// not running is resumed in a new terminal window.
+#[cfg(target_os = "linux")]
+fn open_claude_code(session: &Session, ctx: &LaunchContext) -> HubResult<OpenResult> {
+    let id = validate_id(session.external_id.as_deref().unwrap_or(""))?;
+    let claude = ctx
+        .claude_bin
+        .clone()
+        .ok_or_else(|| HubError::new("Claude Code was not found on this computer."))?;
+    let registry = read_registry(&ctx.claude_home.join("sessions"));
+    if let Some(live) = registry.get(id) {
+        if live.is_background() {
+            if let Some(job) = live.job_id.as_deref() {
+                let job = validate_id(job)?;
+                if let Some((pid, _)) = attached_client(job) {
+                    if let Some(label) = crate::platform::raise_pid(pid) {
+                        return ok(
+                            "focus",
+                            format!("Brought {label} forward. Hoku can't select its tab on Linux."),
+                        );
+                    }
+                    return Err(HubError::with_detail(
+                        "This background session is already attached in a terminal Hoku can't switch to. Go to it there.",
+                        format!("pid {pid}"),
+                    ));
+                }
+                if let Some((pid, _)) = agents_dashboard() {
+                    if let Some(label) = crate::platform::raise_pid(pid) {
+                        return ok(
+                            "focus",
+                            format!(
+                                "Brought {label} forward, where `claude agents` is open. Pick this session there."
+                            ),
+                        );
+                    }
+                }
+                return spawn_claude(
+                    ctx,
+                    live.cwd.as_deref().or(session.working_directory.as_deref()),
+                    &claude,
+                    &format!("attach {job}"),
+                    "attach",
+                    "Attached to the background session",
+                );
+            }
+            return Err(HubError::with_detail(
+                "This background session is running, but Claude Code didn't publish an id to attach to. Open it with `claude agents`.",
+                format!("pid {}", live.pid),
+            ));
+        }
+        if let Some(label) = crate::platform::raise_pid(live.pid) {
+            let message = if label == "VS Code" || label == "VS Code Insiders" {
+                format!("Switched to {label}, where this session is running. Hoku can't select its terminal tab there.")
+            } else {
+                format!("Brought {label} forward. Hoku can't select the tab this session is running in.")
+            };
+            return ok("focus", message);
+        }
+        return Err(HubError {
+            message: "This session is already running in a terminal Hoku can't switch to. Go to it there.".into(),
+            detail: Some(format!(
+                "pid {} · opening another copy would conflict with it",
+                live.pid
+            )),
+        });
+    }
+    if session.source_missing {
+        return Err(HubError::new(
+            "Claude Code no longer has this conversation on disk (it was cleaned up), so it can't be resumed.",
+        ));
+    }
+    spawn_claude(
+        ctx,
+        session.working_directory.as_deref(),
+        &claude,
+        &format!("--resume {id}"),
+        "resume",
+        "Resumed",
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn spawn_claude(
+    ctx: &LaunchContext,
+    dir: Option<&str>,
+    claude: &str,
+    args: &str,
+    method: &str,
+    verb: &str,
+) -> HubResult<OpenResult> {
+    let cwd = existing_dir(dir)?;
+    let place = crate::platform::run_in_terminal(
+        &ctx.terminal_pref,
+        cwd,
+        &format!("cd {} && {} {args}", shell_quote(cwd), shell_quote(claude)),
+    )
+    .map_err(HubError::new)?;
+    ok(method, format!("{verb} in a new {place}"))
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn open_claude_code(_: &Session, _: &LaunchContext) -> HubResult<OpenResult> {
+    Err(HubError::new(
+        "Opening Claude Code sessions is implemented for macOS and Linux.",
+    ))
 }
 
 #[cfg(test)]

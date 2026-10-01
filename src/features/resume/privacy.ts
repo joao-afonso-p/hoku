@@ -1,3 +1,5 @@
+import { here } from "../../lib/host";
+
 /**
  * What an AI draft sends and never sends. Shown before AI drafts are turned on and again before
  * every generation. Keep in step with `build_payload` in src-tauri/src/resume.rs.
@@ -13,4 +15,4 @@ export const NEVER_SENT =
   "Never sent: transcripts, prompts, tool output, file contents, folder paths, links, email addresses, account details or session IDs. Paths, links, emails and token-like strings in titles and notes are replaced before sending.";
 
 export const HOW_IT_RUNS =
-  "Drafts run through the Claude Code CLI installed on this Mac, with its own sign-in, and count against your Claude plan. Hoku never reads or stores credentials. Each draft is a single one-off request with every tool disabled, your customizations off (no CLAUDE.md, hooks, plugins or MCP servers) and no saved Claude session.";
+  `Drafts run through the Claude Code CLI installed on ${here()}, with its own sign-in, and count against your Claude plan. Hoku never reads or stores credentials. Each draft is a single one-off request with every tool disabled, your customizations off (no CLAUDE.md, hooks, plugins or MCP servers) and no saved Claude session.`;

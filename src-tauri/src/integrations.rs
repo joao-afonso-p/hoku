@@ -58,39 +58,15 @@ pub struct ProviderGroup {
     pub capabilities: Vec<Capability>,
 }
 
-fn plist_version(app: &Path) -> Option<String> {
-    let out = Command::new("/usr/bin/defaults")
-        .arg("read")
-        .arg(app.join("Contents/Info.plist"))
-        .arg("CFBundleShortVersionString")
-        .output()
-        .ok()?;
-    out.status
-        .success()
-        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
-}
-
-fn process_running(executable_path: &str) -> bool {
-    Command::new("/usr/bin/pgrep")
-        .args(["-f", executable_path])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
-
-fn app_component(id: &str, name: &str, candidates: &[&str], exe: &str) -> Component {
-    let found = candidates.iter().map(PathBuf::from).find(|p| p.exists());
+fn app_component(id: &str, name: &str, app: crate::platform::InstalledApp) -> Component {
     Component {
         id: id.into(),
         name: name.into(),
         kind: "app".into(),
-        installed: found.is_some(),
-        running: found
-            .as_ref()
-            .map(|p| process_running(&format!("{}/Contents/MacOS/{exe}", p.display())))
-            .unwrap_or(false),
-        version: found.as_deref().and_then(plist_version),
-        path: found.map(|p| p.to_string_lossy().into_owned()),
+        installed: app.installed,
+        running: app.running,
+        version: app.version,
+        path: app.path,
         bundled_path: None,
     }
 }
@@ -103,7 +79,9 @@ pub fn find_cli(name: &str, extra: &[PathBuf]) -> Option<PathBuf> {
         home.join(".local/bin").join(name),
         home.join(".claude/local").join(name),
         PathBuf::from("/opt/homebrew/bin").join(name),
+        PathBuf::from("/home/linuxbrew/.linuxbrew/bin").join(name),
         PathBuf::from("/usr/local/bin").join(name),
+        PathBuf::from("/usr/bin").join(name),
         home.join(".npm-global/bin").join(name),
         home.join(".bun/bin").join(name),
     ];
@@ -146,8 +124,7 @@ pub fn claude_cli() -> Option<PathBuf> {
 
 pub fn codex_cli() -> (Option<PathBuf>, Option<PathBuf>) {
     let on_path = find_cli("codex", &[]);
-    let bundled = PathBuf::from("/Applications/ChatGPT.app/Contents/Resources/codex");
-    (on_path, bundled.is_file().then_some(bundled))
+    (on_path, crate::platform::bundled_codex_cli())
 }
 
 /// Parse `claude auth status` JSON. Only non-secret fields are read.
@@ -238,8 +215,7 @@ pub fn detect(adapters: &[Box<dyn SessionAdapter>]) -> Vec<ProviderGroup> {
     let claude_app = app_component(
         "claude-desktop",
         "Claude Desktop",
-        &["/Applications/Claude.app"],
-        "Claude",
+        crate::platform::claude_desktop(),
     );
     let claude_bin = claude_cli();
     let claude_code = cli_component("claude-code", "Claude Code", claude_bin.as_ref());
@@ -262,7 +238,7 @@ pub fn detect(adapters: &[Box<dyn SessionAdapter>]) -> Vec<ProviderGroup> {
             managed_by: "Claude Desktop".into(),
             hint: None,
         });
-    let cowork_dir = home.join("Library/Application Support/Claude/local-agent-mode-sessions");
+    let cowork_dir = crate::platform::cowork_sessions_dir(&home);
     let claude_caps = vec![
         Capability {
             adapter: "claude-code-transcripts".into(),
@@ -322,8 +298,7 @@ pub fn detect(adapters: &[Box<dyn SessionAdapter>]) -> Vec<ProviderGroup> {
     let codex_app = app_component(
         "codex-desktop",
         "Codex Desktop",
-        &["/Applications/ChatGPT.app", "/Applications/Codex.app"],
-        "ChatGPT",
+        crate::platform::codex_desktop(),
     );
     let (codex_path_cli, codex_bundled) = codex_cli();
     let mut codex_cli_component = cli_component("codex-cli", "Codex CLI", codex_path_cli.as_ref());

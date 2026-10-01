@@ -25,7 +25,8 @@ small typed IPC surface.
 │ association.rs  cwd/repo → project; git worktree resolution  │
 │ recap.rs        recaps: bounded period query, outcomes, PNG  │
 │ providers/      claude_code · codex · claude_desktop (+text) │
-│ launch.rs       terminals (AppleScript), deep links, pbcopy  │
+│ launch.rs       terminals, deep links (platform-specific open)│
+│ platform/       macOS open/Finder/Library; Linux xdg/XDG     │
 │ resume.rs       opt-in AI draft for Project Resume (CLI)     │
 │ integrations.rs installed apps/CLIs, sign-in status          │
 │ devtools.rs     debug builds only: snapshot/eval socket      │
@@ -34,9 +35,12 @@ small typed IPC surface.
 
 ## Data
 
-The only database written is `~/Library/Application Support/com.hoku.app/hub.sqlite`
-(WAL). An index from the old identifier's folder (`com.aisessionhub.app`) is copied over once
-on first launch; the old file is left as a backup. Migrations are an ordered list in `db.rs`, tracked with `PRAGMA user_version`.
+The only database written is Hoku's own `hub.sqlite` (WAL), outside the bundle: on macOS
+`~/Library/Application Support/com.hoku.app/hub.sqlite`, on Linux
+`$XDG_DATA_HOME/com.hoku.app/hub.sqlite` (usually `~/.local/share/com.hoku.app/`). Tauri's
+`app_data_dir()` picks the directory from the bundle id `com.hoku.app`. An index from the
+old identifier's folder (`com.aisessionhub.app`) is copied over once on first launch; the old
+file is left as a backup. Migrations are an ordered list in `db.rs`, tracked with `PRAGMA user_version`.
 
 | Table | Purpose |
 |---|---|
@@ -156,10 +160,13 @@ reload the snapshot. The dataset is hundreds of rows, so this stays simple and c
   token count. Account labels can include the email reported by `claude auth status` or
   Cowork metadata. Credentials in git origin URLs are stripped before storage.
 - `launch.rs` validates ids (`^[A-Za-z0-9][A-Za-z0-9_-]{5,79}$`, so an id can't be a flag), requires existing absolute
-  directories, shell-quotes paths and escapes AppleScript strings. `open` is restricted to
-  `claude://`, `codex://`, `https://claude.ai/` and `https://chatgpt.com/`.
+  directories, shell-quotes paths and escapes AppleScript strings. Opening a URL is restricted to
+  `claude://`, `codex://`, `https://claude.ai/` and `https://chatgpt.com/`, then handed to
+  `/usr/bin/open` on macOS or `xdg-open` on Linux. On Linux the terminal command is one
+  argument to `bash -lc`, not a second shell.
 - Recaps are shared only by the user: the share card is copied to the pasteboard or saved as
-  a new PNG in `~/Downloads` (never overwriting a file), and its text is copied with `pbcopy`.
+  a new PNG in Downloads (never overwriting a file). Text copy uses `pbcopy` on macOS and
+  `wl-copy`, `xclip` or `xsel` on Linux.
   Card content is built from aggregates and the user's own words only. See
   [recaps.md](recaps.md).
 - Hoku makes no network requests of its own and has no analytics or telemetry. The one

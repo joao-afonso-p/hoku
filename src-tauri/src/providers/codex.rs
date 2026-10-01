@@ -594,9 +594,10 @@ impl SessionAdapter for CodexAdapter {
 
     fn scan(&self) -> Result<ScanOutcome, HubError> {
         let Some(db) = self.state_db() else {
-            return Ok(ScanOutcome::Unavailable(
-                "No Codex threads were found on this Mac (~/.codex has no thread index).".into(),
-            ));
+            return Ok(ScanOutcome::Unavailable(format!(
+                "No Codex threads were found on {} (~/.codex has no thread index).",
+                super::computer()
+            )));
         };
         let conn = Self::open_ro(&db)?;
         let threads = self.read_threads(&conn)?;

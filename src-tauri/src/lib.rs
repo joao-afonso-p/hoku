@@ -8,6 +8,7 @@ mod devtools;
 mod integrations;
 mod launch;
 mod models;
+mod platform;
 mod providers;
 mod recap;
 mod resume;
@@ -94,7 +95,8 @@ pub fn run() {
                 commands::take_notification_target,
                 commands::load_demo,
                 commands::clear_demo,
-                commands::database_path
+                commands::database_path,
+                commands::host_info
                 $(, $extra)*
             ]
         };

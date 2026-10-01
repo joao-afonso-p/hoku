@@ -1,3 +1,4 @@
+import { isLinuxHost } from "../lib/host";
 import { tildify } from "../lib/paths";
 import type { Provider, Session } from "../lib/types";
 
@@ -84,7 +85,7 @@ export function openHint(s: Session, terminalPref: string): string | undefined {
   if (s.provider !== "claude-code" || s.source === "demo") return undefined;
   if (s.sourceMissing) return "Claude Code cleaned up this transcript, so it can't be resumed";
   const running = s.runtime.source === "claude-code-registry" && s.runtime.state !== "offline" && s.runtime.state !== "unknown";
-  const where = terminalPref === "terminal" ? "Terminal window" : "iTerm tab";
+  const where = isLinuxHost() ? "terminal window" : terminalPref === "terminal" ? "Terminal window" : "iTerm tab";
   const live = s.metadata?.live as { kind?: string } | undefined;
   if (running && live?.kind === "bg") return `Will attach to the running background session in a new ${where}`;
   if (running) return "Will switch to the terminal it's running in";

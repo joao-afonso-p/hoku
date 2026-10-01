@@ -719,8 +719,9 @@ fn write_png(pb: &objc2_app_kit::NSPasteboard, bytes: &[u8]) -> HubResult<()> {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn copy_png(_: &[u8]) -> HubResult<()> {
-    Err(HubError::new("Copying images is macOS-only."))
+pub fn copy_png(bytes: &[u8]) -> HubResult<()> {
+    check_png(bytes)?;
+    crate::platform::copy_png(bytes).map_err(HubError::new)
 }
 
 #[cfg(test)]
