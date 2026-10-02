@@ -27,6 +27,8 @@ export interface ConstellationProps {
   insetTop: number;
   onSelect: (id: string | null) => void;
   onFocus: (key: string | null) => void;
+  /** A project's core was clicked: show the project. */
+  onCore: (key: string) => void;
   onOpen: (s: Session) => void;
   onReassign: (sessionId: string, systemKey: string) => void;
   mode: "current" | "all";
@@ -581,7 +583,7 @@ export function Constellation(props: ConstellationProps) {
               mode={props.mode}
               onEnter={() => setHover({ kind: "system", id: c.system.key })}
               onLeave={() => setHover((h) => (h?.id === c.system.key ? null : h))}
-              onClick={() => props.onFocus(c.system.key)}
+              onClick={() => props.onCore(c.system.key)}
             />
           ))}
 

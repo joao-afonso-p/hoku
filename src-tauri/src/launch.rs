@@ -911,6 +911,67 @@ fn open_claude_code(session: &Session, ctx: &LaunchContext) -> HubResult<OpenRes
     )
 }
 
+/// The shell line that starts a new Claude Code conversation in `dir` under the id Hoku chose,
+/// so the scan that finds it knows which project it was started for.
+pub fn new_session_command(claude: &str, dir: &str, id: &str) -> HubResult<String> {
+    let id = validate_id(id)?;
+    Ok(format!(
+        "cd {} && {} --session-id {id}",
+        shell_quote(dir),
+        shell_quote(claude)
+    ))
+}
+
+/// "New session": start Claude Code in a new terminal tab in `dir`.
+pub fn start_claude_code(dir: &str, id: &str, ctx: &LaunchContext) -> HubResult<OpenResult> {
+    let claude = ctx
+        .claude_bin
+        .as_deref()
+        .ok_or_else(|| HubError::new("Claude Code was not found on this Mac."))?;
+    if !dir.starts_with('/') || !Path::new(dir).is_dir() {
+        return Err(HubError::with_detail("That folder doesn't exist.", dir));
+    }
+    let terminal = preferred_terminal(&ctx.terminal_pref);
+    let place = run_in_terminal(terminal, &new_session_command(claude, dir, id)?)?;
+    ok_in(
+        terminal,
+        "new",
+        format!("Started Claude Code in a new {} {place}", terminal.name()),
+    )
+}
+
+/// A native folder chooser, starting in `start` when it exists. None when cancelled.
+/// Main thread only: the panel runs modally.
+#[cfg(target_os = "macos")]
+pub fn choose_folder(start: Option<&str>, prompt: &str) -> Option<String> {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSModalResponseOK, NSOpenPanel};
+    use objc2_foundation::{NSString, NSURL};
+    let mtm = MainThreadMarker::new()?;
+    let panel = NSOpenPanel::openPanel(mtm);
+    panel.setCanChooseDirectories(true);
+    panel.setCanChooseFiles(false);
+    panel.setAllowsMultipleSelection(false);
+    panel.setCanCreateDirectories(true);
+    panel.setPrompt(Some(&NSString::from_str("Choose")));
+    panel.setMessage(Some(&NSString::from_str(prompt)));
+    if let Some(dir) = start.filter(|d| d.starts_with('/') && Path::new(d).is_dir()) {
+        panel.setDirectoryURL(Some(&NSURL::fileURLWithPath_isDirectory(
+            &NSString::from_str(dir),
+            true,
+        )));
+    }
+    if panel.runModal() != NSModalResponseOK {
+        return None;
+    }
+    panel.URL()?.path().map(|p| p.to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn choose_folder(_: Option<&str>, _: &str) -> Option<String> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -932,6 +993,16 @@ mod tests {
         assert!(validate_id("abc").is_err());
         assert!(validate_id("--dangerously-skip-permissions").is_err());
         assert!(validate_id("-abcdef").is_err());
+    }
+
+    #[test]
+    fn new_sessions_start_quoted_under_the_chosen_id() {
+        let id = "4d44b29a-bb72-4b82-81b2-79126dae948c";
+        assert_eq!(
+            new_session_command("/opt/claude", "/x/it's; here", id).unwrap(),
+            format!(r"cd '/x/it'\''s; here' && '/opt/claude' --session-id {id}")
+        );
+        assert!(new_session_command("/opt/claude", "/x", "--resume").is_err());
     }
 
     /// `HOKU_WINDOW_IDS=1,2 cargo test probe_window_space -- --ignored --nocapture`

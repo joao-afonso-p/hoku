@@ -1,17 +1,19 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { openOverlay, openSession, saveProjectResume, scan, select, toggleList } from "../../app/actions";
+import { fail, openOverlay, openSession, saveProjectResume, scan, select, startSession, toggleList } from "../../app/actions";
 import { enterSession } from "../activity/drawerActions";
 import { setState, useHub } from "../../app/store";
 import { useMinuteClock } from "../../app/useClock";
+import { api } from "../../lib/api";
+import { tildify } from "../../lib/paths";
 import { relativeTime } from "../../lib/time";
 import type { Project, Session } from "../../lib/types";
 import { openDescription, PROVIDERS, surfaceLabel } from "../../providers";
-import { IconArrowUpRight, IconClose, IconEdit, IconLink } from "../../components/Icons";
+import { IconArrowUpRight, IconClose, IconEdit, IconFolder, IconLink, IconPlus } from "../../components/Icons";
 import { GlyphIcon } from "../constellation/Glyph";
 import { countStatuses, isInferred, reasonText, STATUS, statusKey } from "../runtime/status";
 import { RuntimeSummaryText, StatusDot, StatusLabel } from "../runtime/StatusMark";
 import { AiDraftPanel } from "./AiDraftPanel";
-import { buildResume, canOpen, CHANGE_WINDOW_DAYS, prLabel, RECENT_COUNT, RESUME_VERB, type ContinueWith } from "./model";
+import { buildResume, canOpen, CHANGE_WINDOW_DAYS, launchFolder, prLabel, RECENT_COUNT, RESUME_VERB, type ContinueWith } from "./model";
 
 export const RESUME_WIDTH = 392;
 /** Settings key shared with the backend (`resume::SETTING_KEY`). */
@@ -75,6 +77,8 @@ export function ResumeDrawer({ project }: { project: Project }) {
           {r.lastActiveAt && <> · last active {relativeTime(r.lastActiveAt, now)}</>}
           {project.isDemo && <span className="text-ink-4"> · demo data</span>}
         </div>
+
+        <NewSessionCard key={project.id} project={project} sessions={sessions} />
 
         {/* What is this project? */}
         <Section
@@ -217,6 +221,79 @@ export function ResumeDrawer({ project }: { project: Project }) {
         )}
       </div>
     </aside>
+  );
+}
+
+const FOLDER_FROM = { root: "project folder", recent: "where you last worked", chosen: "chosen for this session" } as const;
+
+/**
+ * Start Claude Code for this project in a new terminal tab: in the project's folder by default,
+ * or one chosen for this session. Hoku names the session up front, so it joins this project
+ * wherever it runs.
+ */
+function NewSessionCard({ project, sessions }: { project: Project; sessions: Session[] }) {
+  const fallback = useMemo(() => launchFolder(project, sessions), [project, sessions]);
+  const [chosen, setChosen] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const folder = chosen ? { path: chosen, from: "chosen" as const } : fallback;
+
+  const choose = async () => {
+    try {
+      return await api.chooseFolder(folder?.path ?? null, `Start a Claude Code session for ${project.name} in…`);
+    } catch (e) {
+      fail(e);
+      return null;
+    }
+  };
+  const start = async () => {
+    const path = folder?.path ?? (await choose());
+    if (!path) return;
+    if (!folder) setChosen(path);
+    setBusy(true);
+    await startSession(project.id, path);
+    setBusy(false);
+  };
+
+  return (
+    <section className="mt-4 rounded-[10px] border border-line px-3 py-2.5">
+      <button
+        className="btn btn-primary h-8 w-full justify-between px-3 text-[12.5px]"
+        disabled={busy || project.isDemo}
+        onClick={() => void start()}
+        title={project.isDemo ? "Demo projects can’t start sessions" : "Open a new terminal tab running Claude Code"}
+      >
+        <span className="flex items-center gap-2">
+          <IconPlus size={14} />
+          {folder ? "New Claude Code session" : "New Claude Code session…"}
+        </span>
+      </button>
+      <div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-[11.5px] text-ink-3">
+        <IconFolder size={12} className="shrink-0 text-ink-4" />
+        {folder ? (
+          <span className="min-w-0 truncate" title={folder.path}>
+            <span className="font-mono text-[11px] text-ink-2">{tildify(folder.path)}</span>
+            <span className="text-ink-4"> · {FOLDER_FROM[folder.from]}</span>
+          </span>
+        ) : (
+          <span className="min-w-0 truncate text-ink-4">No project folder yet. You’ll pick one.</span>
+        )}
+        <span className="ml-auto flex shrink-0 gap-0.5">
+          {chosen && (
+            <button className="btn btn-ghost h-6 px-1.5 text-[11.5px] text-ink-4" onClick={() => setChosen(null)} title="Go back to the default folder">
+              Reset
+            </button>
+          )}
+          <button
+            className="btn btn-ghost h-6 px-1.5 text-[11.5px] text-ink-3"
+            disabled={busy || project.isDemo}
+            onClick={() => void choose().then((p) => p && setChosen(p))}
+            title="Start this session in another folder. It still joins this project."
+          >
+            Change…
+          </button>
+        </span>
+      </div>
+    </section>
   );
 }
 

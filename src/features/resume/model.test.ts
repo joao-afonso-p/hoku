@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { daysAgo, minutesAgo, NOW, rt, session } from "../../test/fixtures";
-import type { ActivityEvent, ActivityEventType } from "../../lib/types";
-import { buildResume, canOpen, CHANGE_WINDOW_DAYS, pickContinue, prLabel, summarizeChanges } from "./model";
+import type { ActivityEvent, ActivityEventType, Project } from "../../lib/types";
+import { buildResume, canOpen, CHANGE_WINDOW_DAYS, launchFolder, pickContinue, prLabel, summarizeChanges } from "./model";
+
+const NOW_ISO = new Date(NOW).toISOString();
 
 let n = 0;
 const event = (sessionId: string, type: ActivityEventType, timestamp: string): ActivityEvent => ({ id: `e${++n}`, sessionId, type, provider: "codex", timestamp });
@@ -83,5 +85,27 @@ describe("helpers", () => {
     expect(prLabel(session({ metadata: { prUrl: "https://github.com/o/r/pull/42" } }))).toBe("PR #42");
     expect(prLabel(session({ metadata: { prUrl: "https://example.test/review" } }))).toBe("Pull request");
     expect(prLabel(session())).toBeNull();
+  });
+});
+
+describe("launchFolder", () => {
+  const atlas: Project = { id: "p1", name: "Atlas", rootPath: null, slot: 1, isDemo: false, createdAt: NOW_ISO, updatedAt: NOW_ISO };
+
+  it("starts in the project's folder", () => {
+    expect(launchFolder({ ...atlas, rootPath: "/work/atlas" }, [session({ projectId: "p1", workingDirectory: "/tmp/x" })])).toEqual({ path: "/work/atlas", from: "root" });
+  });
+
+  it("without one, starts where you last worked in the project", () => {
+    const sessions = [
+      session({ projectId: "p1", workingDirectory: "/work/old", lastActivityAt: daysAgo(3) }),
+      session({ projectId: "p1", workingDirectory: "/work/new", lastActivityAt: minutesAgo(5) }),
+      session({ projectId: "p2", workingDirectory: "/work/elsewhere", lastActivityAt: minutesAgo(1) }),
+      session({ projectId: "p1", workingDirectory: "/demo", source: "demo", lastActivityAt: minutesAgo(1) }),
+    ];
+    expect(launchFolder(atlas, sessions)).toEqual({ path: "/work/new", from: "recent" });
+  });
+
+  it("has nothing to offer for an empty project with no folder", () => {
+    expect(launchFolder(atlas, [session({ projectId: "p1" })])).toBeNull();
   });
 });

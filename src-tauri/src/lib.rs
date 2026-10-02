@@ -71,6 +71,8 @@ pub fn run() {
                 commands::delete_session,
                 commands::set_link,
                 commands::open_session,
+                commands::start_session,
+                commands::choose_folder,
                 commands::copy_text,
                 commands::spaces_switch_enabled,
                 commands::open_spaces_settings,

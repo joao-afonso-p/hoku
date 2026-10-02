@@ -227,6 +227,16 @@ export async function openSession(session: Session) {
   }
 }
 
+/** "New session" on a project. Claude Code writes the session down with your first prompt. */
+export async function startSession(projectId: string, directory: string | null) {
+  try {
+    const r = await api.startSession(projectId, directory);
+    toast({ tone: "success", message: `${r.message}. It joins the project with your first prompt.` }, 5000);
+  } catch (e) {
+    fail(e);
+  }
+}
+
 export async function patchSession(id: string, patch: SessionPatch, quiet = false) {
   try {
     await api.updateSession(id, patch);

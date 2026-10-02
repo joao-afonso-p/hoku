@@ -122,10 +122,16 @@ fn merge(
             .as_deref()
             .or(hints.get(account_provider).map(String::as_str));
         let account = db::resolve_account(c, account_provider, hint)?;
+        // Started from a project in Hoku: it belongs there, wherever it ran.
+        let launched = db::take_pending_launch(c, provider, &d.external_id)?;
+        let project = launched.clone().or(project);
         match db::upsert_discovered(c, provider, adapter.key(), d, project, Some(account))? {
             db::UpsertOutcome::New => result.new += 1,
             db::UpsertOutcome::Updated => result.updated += 1,
             db::UpsertOutcome::Unchanged | db::UpsertOutcome::Forgotten => {}
+        }
+        if let Some(project_id) = launched {
+            db::assign_launched(c, provider, &d.external_id, &project_id)?;
         }
         seen.push(d.external_id.clone());
     }
@@ -169,4 +175,93 @@ pub fn reassociate(c: &Connection) -> rusqlite::Result<usize> {
         }
     }
     Ok(n)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::{open_in_memory, ProjectInput};
+
+    struct Found(Vec<DiscoveredSession>);
+    impl SessionAdapter for Found {
+        fn key(&self) -> &'static str {
+            "claude-code-transcripts"
+        }
+        fn provider(&self) -> Provider {
+            Provider::ClaudeCode
+        }
+        fn label(&self) -> &'static str {
+            "Found"
+        }
+        fn scan(&self) -> Result<ScanOutcome, HubError> {
+            Ok(ScanOutcome::Found(self.0.clone()))
+        }
+    }
+
+    fn project(c: &Connection, name: &str, root: &str) -> Project {
+        db::create_project(
+            c,
+            ProjectInput {
+                name: name.into(),
+                root_path: Some(root.into()),
+                icon: None,
+                color: None,
+                is_demo: false,
+            },
+        )
+        .unwrap()
+    }
+
+    fn session(ext: &str, cwd: &str) -> DiscoveredSession {
+        DiscoveredSession {
+            external_id: ext.into(),
+            title: "New".into(),
+            working_directory: Some(cwd.into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_session_started_for_a_project_joins_it_wherever_it_ran() {
+        let conn = open_in_memory();
+        let atlas = project(&conn, "Atlas", "/work/atlas");
+        let other = project(&conn, "Other", "/work/other");
+        db::add_pending_launch(&conn, Provider::ClaudeCode, "started-1", &atlas.id).unwrap();
+        let db = Mutex::new(conn);
+        let adapters: Vec<Box<dyn SessionAdapter>> = vec![Box::new(Found(vec![
+            // Ran inside another project's root, but was started for Atlas.
+            session("started-1", "/work/other/sub"),
+            session("plain-1", "/work/other"),
+        ]))];
+        run_scan(&db, &adapters, None, &AccountHints::new());
+
+        let c = db.lock().unwrap();
+        let started = db::find_session_by_external(&c, Provider::ClaudeCode, "started-1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(started.project_id.as_deref(), Some(atlas.id.as_str()));
+        assert!(started.project_locked, "a launch is an explicit choice");
+        let plain = db::find_session_by_external(&c, Provider::ClaudeCode, "plain-1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(plain.project_id.as_deref(), Some(other.id.as_str()));
+        assert!(!plain.project_locked);
+        // The marker is used up.
+        assert_eq!(
+            db::take_pending_launch(&c, Provider::ClaudeCode, "started-1").unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn deleting_the_project_drops_its_pending_launches() {
+        let conn = open_in_memory();
+        let atlas = project(&conn, "Atlas", "/work/atlas");
+        db::add_pending_launch(&conn, Provider::ClaudeCode, "started-1", &atlas.id).unwrap();
+        db::delete_project(&conn, &atlas.id).unwrap();
+        assert_eq!(
+            db::take_pending_launch(&conn, Provider::ClaudeCode, "started-1").unwrap(),
+            None
+        );
+    }
 }

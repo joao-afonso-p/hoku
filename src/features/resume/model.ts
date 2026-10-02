@@ -3,7 +3,7 @@
  * down. Pure, so the drawer only presents it. Runtime meaning comes from ../runtime/status.
  */
 import { ageMs, DURATION } from "../../lib/time";
-import type { ActivityEvent, ActivityEventType, Session, SessionLink } from "../../lib/types";
+import type { ActivityEvent, ActivityEventType, Project, Session, SessionLink } from "../../lib/types";
 import { isInferred, isLive, reasonText, sortNeedsYou, statusKey } from "../runtime/status";
 
 /** How far back "What changed" looks. */
@@ -52,6 +52,15 @@ export interface ResumeModel {
   lastActiveAt: string | null;
   /** Linked-session count per session id. */
   linkCount: Map<string, number>;
+}
+
+/** Where "New session" starts by default: the project's folder, else where you last worked in it. */
+export function launchFolder(project: Project, sessions: Session[]): { path: string; from: "root" | "recent" } | null {
+  if (project.rootPath) return { path: project.rootPath, from: "root" };
+  const last = sessions
+    .filter((s) => s.projectId === project.id && s.workingDirectory && s.source !== "demo")
+    .sort((a, b) => ageMs(a.lastActivityAt) - ageMs(b.lastActivityAt))[0];
+  return last ? { path: last.workingDirectory!, from: "recent" } : null;
 }
 
 /** Can Hoku reopen it? Demo sessions and pruned Claude Code transcripts can't. */

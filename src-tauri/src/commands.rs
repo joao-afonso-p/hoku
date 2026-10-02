@@ -397,22 +397,13 @@ pub async fn open_session(
             .and_then(|w| w.is_fullscreen().ok())
             .unwrap_or(false)
     };
-    // Yield the foreground now, synchronously, while Hoku is certainly still frontmost.
-    let (tx, rx) = std::sync::mpsc::channel();
-    let _ = app.run_on_main_thread(move || {
-        launch::yield_to(&launch::HOST_BUNDLES);
-        let _ = tx.send(());
-    });
-    let _ = rx.recv_timeout(std::time::Duration::from_millis(500));
+    yield_to_hosts(&app);
     blocking(move || {
         let (session, pref) = {
             let c = dbh.lock().expect("db");
             let s = db::get_session(&c, &id)?
                 .ok_or_else(|| HubError::new("That session no longer exists."))?;
-            let pref = db::get_setting(&c, "terminal")?
-                .and_then(|v| v.as_str().map(str::to_string))
-                .unwrap_or_else(|| "auto".into());
-            (s, pref)
+            (s, terminal_pref(&c)?)
         };
         if session.source.as_deref() == Some("demo") {
             return Err(HubError::new(
@@ -427,24 +418,118 @@ pub async fn open_session(
         };
         let result = launch::open_session(&session, &ctx)?;
         db::mark_opened(&dbh.lock().expect("db"), &session.id)?;
-        if let Some(bundle) = result.activate.clone() {
-            let b = bundle.clone();
-            let _ = app.run_on_main_thread(move || {
-                launch::activate_app(&b);
-            });
-            // Verify, and retry once through LaunchServices if the terminal still isn't in front.
-            let app2 = app.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(300));
-                let _ = app2.run_on_main_thread(move || {
-                    if !launch::is_active(&bundle) {
-                        launch::open_by_bundle(&bundle);
-                        launch::activate_app(&bundle);
-                    }
-                });
-            });
-        }
+        bring_forward(&app, &result);
         Ok(result)
+    })
+    .await
+}
+
+/// Yield the foreground now, synchronously, while Hoku is certainly still frontmost.
+fn yield_to_hosts(app: &tauri::AppHandle) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let _ = app.run_on_main_thread(move || {
+        launch::yield_to(&launch::HOST_BUNDLES);
+        let _ = tx.send(());
+    });
+    let _ = rx.recv_timeout(std::time::Duration::from_millis(500));
+}
+
+/// Bring the app a launch went to (a terminal) to the front, on the main thread.
+fn bring_forward(app: &tauri::AppHandle, result: &OpenResult) {
+    let Some(bundle) = result.activate.clone() else {
+        return;
+    };
+    let b = bundle.clone();
+    let _ = app.run_on_main_thread(move || {
+        launch::activate_app(&b);
+    });
+    // Verify, and retry once through LaunchServices if the terminal still isn't in front.
+    let app2 = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let _ = app2.run_on_main_thread(move || {
+            if !launch::is_active(&bundle) {
+                launch::open_by_bundle(&bundle);
+                launch::activate_app(&bundle);
+            }
+        });
+    });
+}
+
+fn terminal_pref(c: &Connection) -> HubResult<String> {
+    Ok(db::get_setting(c, "terminal")?
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_else(|| "auto".into()))
+}
+
+/// "New session" on a project: Claude Code in a new terminal tab, in `directory` (the project's
+/// root folder when not given). Hoku picks the session id so the session joins this project
+/// when it's discovered, even if the folder is outside the project's root.
+#[tauri::command]
+pub async fn start_session(
+    app: tauri::AppHandle,
+    state: Db<'_>,
+    project_id: String,
+    directory: Option<String>,
+) -> HubResult<OpenResult> {
+    let dbh = state.db.clone();
+    let claude_home = state.claude_home.clone();
+    yield_to_hosts(&app);
+    blocking(move || {
+        let (dir, pref) = {
+            let c = dbh.lock().expect("db");
+            let project = db::get_project(&c, &project_id)?
+                .ok_or_else(|| HubError::new("That project no longer exists."))?;
+            if project.is_demo {
+                return Err(HubError::new(
+                    "This is a demo project. Start sessions in one of your own.",
+                ));
+            }
+            let dir = directory
+                .filter(|d| !d.trim().is_empty())
+                .or(project.root_path)
+                .ok_or_else(|| HubError::new("Choose a folder to start the session in."))?;
+            (db::normalize_root(&dir), terminal_pref(&c)?)
+        };
+        let ctx = LaunchContext {
+            claude_bin: integrations::claude_cli().map(|p| p.to_string_lossy().into_owned()),
+            terminal_pref: pref,
+            claude_home,
+            hoku_fullscreen: false,
+        };
+        let id = db::new_id();
+        // Recorded first: the session can be discovered as soon as it starts.
+        db::add_pending_launch(
+            &dbh.lock().expect("db"),
+            Provider::ClaudeCode,
+            &id,
+            &project_id,
+        )?;
+        let result = launch::start_claude_code(&dir, &id, &ctx).inspect_err(|_| {
+            let _ = db::take_pending_launch(&dbh.lock().expect("db"), Provider::ClaudeCode, &id);
+        })?;
+        bring_forward(&app, &result);
+        Ok(result)
+    })
+    .await
+}
+
+/// A native folder chooser. None when cancelled.
+#[tauri::command]
+pub async fn choose_folder(
+    app: tauri::AppHandle,
+    start: Option<String>,
+    prompt: Option<String>,
+) -> HubResult<Option<String>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.run_on_main_thread(move || {
+        let prompt = prompt.unwrap_or_else(|| "Choose a folder".into());
+        let _ = tx.send(launch::choose_folder(start.as_deref(), &prompt));
+    })
+    .map_err(|e| HubError::with_detail("The folder chooser couldn't be shown.", e))?;
+    blocking(move || {
+        rx.recv()
+            .map_err(|e| HubError::with_detail("The folder chooser couldn't be shown.", e))
     })
     .await
 }

@@ -184,7 +184,7 @@ export interface ScanReport {
 }
 
 export interface OpenResult {
-  method: "deep-link" | "attach" | "resume" | "focus" | "fallback";
+  method: "deep-link" | "attach" | "resume" | "focus" | "fallback" | "new";
   message: string;
   /** "spaces-setting": the terminal is on another desktop and macOS won't switch there. */
   hint?: string | null;

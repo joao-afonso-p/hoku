@@ -46,6 +46,7 @@ on first launch; the old file is left as a backup. Migrations are an ordered lis
 | `activity_events` | semantic runtime transitions for the Activity timeline (90 days) |
 | `session_links` | optional undirected relationships |
 | `forgotten_sessions` | one marker per session the user forgot: `(provider, external_id)`, the last activity Hoku knew, and when. No titles or text. Removed when the session returns |
+| `pending_launches` | one marker per session Hoku started from a project (`(provider, external_id)` → project). The first scan that finds it files it there, and the marker goes. Dropped after 14 days or with the project. No titles or text |
 | `recap_outcomes` | one-line milestones the user writes for recaps (text ≤140 chars, local date, optional project). Never inferred |
 | `scan_runs` | per-adapter scan history (for "last scan") |
 | `settings` | key → JSON (terminal preference, first-scan flag, `notifications.*` alert preferences) |
@@ -73,7 +74,10 @@ by hand clears the marker. Demo sessions and sessions without a provider id leav
 
 ### Project association (`association.rs`)
 
-1. Explicit user choice, which is sticky.
+1. Explicit user choice, which is sticky. Starting a session from a project counts as one:
+   "New session" (`commands::start_session`) gives Claude Code the id up front
+   (`claude --session-id`), records it in `pending_launches`, and `scan::merge` files the session
+   under that project and locks it, even when it ran outside the project's root.
 2. Existing assignment.
 3. The deepest project root that contains the session's repository root or working
    directory.
@@ -169,7 +173,10 @@ reload the snapshot. The dataset is hundreds of rows, so this stays simple and c
 
 ## Project Resume
 
-`src/features/resume/` presents a focused project's Resume. `model.ts` is pure: it
+`src/features/resume/` presents a focused project's Resume; clicking a project's core opens it.
+Its first action is New session: Claude Code in a new terminal tab, in the project's root
+folder, else where you last worked in it (`launchFolder`), or a folder chosen in the native
+chooser (`choose_folder`). `model.ts` is pure: it
 decides what needs a decision (`sortNeedsYou`), where to continue (needs you → working →
 ready → error → most recent, preferring sessions Hoku can reopen), recent sessions, the
 last 7 days of semantic events and the notes you wrote. Its wording never overclaims:

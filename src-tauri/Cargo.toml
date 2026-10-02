@@ -35,8 +35,8 @@ libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSArray", "NSBundle", "NSData", "NSDictionary", "NSEnumerator", "NSError", "NSString", "NSValue"] }
-objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSBitmapImageRep", "NSDockTile", "NSGraphics", "NSImage", "NSImageRep", "NSPasteboard", "NSResponder", "NSRunningApplication"] }
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSBundle", "NSData", "NSDictionary", "NSEnumerator", "NSError", "NSString", "NSURL", "NSValue"] }
+objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSBitmapImageRep", "NSDockTile", "NSGraphics", "NSImage", "NSImageRep", "NSOpenPanel", "NSPanel", "NSPasteboard", "NSResponder", "NSRunningApplication", "NSSavePanel", "NSWindow"] }
 objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "bitflags", "block2", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationSettings", "UNNotificationSound", "UNNotificationTrigger", "UNUserNotificationCenter"] }
 objc2-web-kit = { version = "0.3", features = ["WKWebView", "WKSnapshotConfiguration", "block2", "objc2-app-kit"] }
 block2 = "0.6"
