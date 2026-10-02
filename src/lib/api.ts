@@ -98,6 +98,10 @@ export const api = {
   setLink: (from: string, to: string, linked: boolean) => call<void>("set_link", { from, to, linked }),
 
   openSession: (id: string) => call<OpenResult>("open_session", { id }),
+  /** Claude Code in a new terminal tab, in `directory` or the project's root folder. */
+  startSession: (projectId: string, directory: string | null) => call<OpenResult>("start_session", { projectId, directory }),
+  /** The native folder chooser. `null` when cancelled. */
+  chooseFolder: (start: string | null, prompt: string) => call<string | null>("choose_folder", { start, prompt }),
   copyText: (text: string) => call<void>("copy_text", { text }),
   spacesSwitchEnabled: () => call<boolean>("spaces_switch_enabled"),
   openSpacesSettings: () => call<void>("open_spaces_settings"),

@@ -86,6 +86,8 @@ export function App() {
             ambience={ambience}
             onSelect={select}
             onFocus={focusProject}
+            // A project's core opens its pane (Resume, with New session); again closes it.
+            onCore={(key) => (key === UNSORTED ? focusProject(key) : toggleResume(key))}
             onOpen={(s) => void openSession(s)}
             onReassign={(id, key) => {
               const name = systems.find((s) => s.key === key)?.name ?? "project";

@@ -64,8 +64,9 @@ covers verifying a download and what changes on update.
   [Guide](https://joao-afonso-p.github.io/hoku/guides/search/)
 - **Follow up**, your own review-later queue with reminders.
   [Guide](https://joao-afonso-p.github.io/hoku/guides/follow-up/)
-- **Project Resume**: where to continue, what needs a decision, what changed, with optional AI
-  drafts through your Claude Code CLI. [Guide](https://joao-afonso-p.github.io/hoku/guides/resume/)
+- **Project Resume**: click a project's core to see where to continue, what needs a decision and
+  what changed, or start a new Claude Code session in the project's folder (or one you pick).
+  Optional AI drafts through your Claude Code CLI. [Guide](https://joao-afonso-p.github.io/hoku/guides/resume/)
 - **Recaps**: a public-safe, shareable summary of a period, with outcomes you write.
   [Guide](https://joao-afonso-p.github.io/hoku/guides/recaps/)
 - **Activity**, **Sessions**, **Favorites**, **Projects**, manual add for Claude chats, and

@@ -167,6 +167,17 @@ const MIGRATIONS: &[&str] = &[
         PRIMARY KEY (provider, external_id)
     );
     "#,
+    // v8 — Sessions Hoku started for a project, by the id it gave them. The first scan that
+    // finds one files it under that project, even outside the project's root. No titles or text.
+    r#"
+    CREATE TABLE pending_launches (
+        provider      TEXT NOT NULL,
+        external_id   TEXT NOT NULL,
+        project_id    TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        launched_at   TEXT NOT NULL,
+        PRIMARY KEY (provider, external_id)
+    );
+    "#,
 ];
 
 /// The bundle identifier before Hoku had its own (`com.hoku.app`). The app-data folder is
@@ -984,6 +995,68 @@ pub fn upsert_discovered(
             })
         }
     }
+}
+
+/// Days a started session may take to show up (its transcript appears with the first prompt).
+const PENDING_LAUNCH_DAYS: i64 = 14;
+
+/// Remember that Hoku started session `external_id` for `project_id`.
+pub fn add_pending_launch(
+    conn: &Connection,
+    provider: Provider,
+    external_id: &str,
+    project_id: &str,
+) -> HubResult<()> {
+    let cutoff = (Utc::now() - chrono::Duration::days(PENDING_LAUNCH_DAYS))
+        .to_rfc3339_opts(SecondsFormat::Millis, true);
+    conn.execute(
+        "DELETE FROM pending_launches WHERE launched_at < ?1",
+        params![cutoff],
+    )?;
+    conn.execute(
+        "INSERT OR REPLACE INTO pending_launches (provider, external_id, project_id, launched_at)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![provider.as_str(), external_id, project_id, now_iso()],
+    )?;
+    Ok(())
+}
+
+/// The project a session Hoku started was meant for, removing the marker. None for any other.
+pub fn take_pending_launch(
+    conn: &Connection,
+    provider: Provider,
+    external_id: &str,
+) -> rusqlite::Result<Option<String>> {
+    let project: Option<String> = conn
+        .query_row(
+            "SELECT project_id FROM pending_launches WHERE provider = ?1 AND external_id = ?2",
+            params![provider.as_str(), external_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if project.is_some() {
+        conn.execute(
+            "DELETE FROM pending_launches WHERE provider = ?1 AND external_id = ?2",
+            params![provider.as_str(), external_id],
+        )?;
+    }
+    Ok(project)
+}
+
+/// File a session under the project it was started for, as if the user had moved it there.
+/// A project the user already picked by hand wins.
+pub fn assign_launched(
+    conn: &Connection,
+    provider: Provider,
+    external_id: &str,
+    project_id: &str,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE sessions SET project_id = ?3, project_locked = 1, updated_at = ?4
+         WHERE provider = ?1 AND external_id = ?2 AND project_locked = 0",
+        params![provider.as_str(), external_id, project_id, now_iso()],
+    )?;
+    Ok(())
 }
 
 /// Sessions from this source that the provider no longer reports get flagged, not deleted —
