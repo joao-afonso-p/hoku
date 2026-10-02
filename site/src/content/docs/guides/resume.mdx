@@ -7,9 +7,21 @@ import { Steps } from "@astrojs/starlight/components";
 
 Resume answers "where was I?" for one project: what it is, where to pick up, what's waiting on you, and what changed recently.
 
-**Open it:** zoom into a project and click **Resume** in the top bar or press <kbd>R</kbd>. You can also use the Resume icon in the Projects drawer, or *Resume this project* in <kbd>⌘</kbd><kbd>K</kbd>. Press <kbd>R</kbd> again or <kbd>Esc</kbd> to close it.
+**Open it:** click a project's core (the star at its center). Or zoom into a project and click **Resume** in the top bar or press <kbd>R</kbd>. You can also use the Resume icon in the Projects drawer, or *Resume this project* in <kbd>⌘</kbd><kbd>K</kbd>. Click the core again, press <kbd>R</kbd> again, or press <kbd>Esc</kbd> to close it.
 
 ![Resume for Demo · Vega: About, Next step, a Continue here card for a Claude session waiting on authentication, a Needs a decision section with two sessions, and Recent sessions with branches and notes. The project's map is on the right.](../../../../../docs/images/resume.png)
+
+## Start a new session
+
+The first thing in Resume is **New Claude Code session**. Click it, and Hoku opens a new iTerm tab (or Terminal window) running Claude Code in the folder shown under the button:
+
+- the project's root folder, if it has one
+- otherwise, the folder you last worked in for this project
+- or any folder you pick with **Change…**. **Reset** goes back to the default.
+
+If the project has no folder yet, the button asks you to pick one first.
+
+The new session joins this project, even if you picked a folder outside the project's root. It appears on the map after your first prompt, because that's when Claude Code saves it. New sessions are Claude Code only: Codex and Claude Desktop can't start a thread in a given folder.
 
 ## What's in it
 
