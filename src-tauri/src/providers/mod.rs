@@ -148,6 +148,9 @@ pub fn all_adapters() -> Vec<Box<dyn SessionAdapter>> {
         Box::new(claude_desktop::CoworkAdapter::new(home.join(
             "Library/Application Support/Claude/local-agent-mode-sessions",
         ))),
+        Box::new(claude_desktop::CoworkRemoteAdapter::new(home.join(
+            "Library/Application Support/Claude/local-agent-mode-sessions",
+        ))),
     ]
 }
 

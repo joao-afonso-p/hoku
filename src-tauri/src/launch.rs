@@ -731,7 +731,49 @@ pub fn open_session(session: &Session, ctx: &LaunchContext) -> HubResult<OpenRes
     }
 }
 
+/// How Hoku should open a Claude session. Factored out so the decision is unit-testable without
+/// launching any app.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClaudeOpen {
+    /// Normal path: fire the session's verified deep link.
+    DeepLink,
+    /// Remote Cowork, guarded: the `cowork_sessions` route is unverified, so never fire a link.
+    /// Open Claude Desktop and say Hoku can't yet reach the specific session.
+    GuardedApp,
+}
+
+/// A remote Cowork session is marked `remote`+`openUnverified` in its metadata and carries no
+/// `deep_link`; either signal (unverified flags, or a cowork session with no link) takes the
+/// guarded path so an unverified deep link is never fired.
+fn claude_open_decision(session: &Session) -> ClaudeOpen {
+    let meta = session.metadata.as_ref();
+    let flag = |k: &str| {
+        meta.and_then(|m| m.get(k))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    };
+    let is_cowork = meta.and_then(|m| m.get("surface")).and_then(|v| v.as_str()) == Some("cowork");
+    if (flag("remote") && flag("openUnverified")) || (is_cowork && session.deep_link.is_none()) {
+        ClaudeOpen::GuardedApp
+    } else {
+        ClaudeOpen::DeepLink
+    }
+}
+
 fn open_claude(session: &Session) -> HubResult<OpenResult> {
+    if claude_open_decision(session) == ClaudeOpen::GuardedApp {
+        if !app_installed("/Applications/Claude.app") {
+            return Err(HubError::new("Claude Desktop isn't installed on this Mac."));
+        }
+        run(Command::new("/usr/bin/open")
+            .arg("-a")
+            .arg("/Applications/Claude.app"))
+        .map_err(|e| HubError::with_detail("Couldn't open Claude Desktop.", e))?;
+        return ok(
+            "app",
+            "Opened Claude Desktop. Hoku can't yet take you to this specific Cowork session.",
+        );
+    }
     let link = session
         .deep_link
         .as_deref()
@@ -1216,5 +1258,73 @@ mod tests {
         assert!(allowed_url("codex://threads/x"));
         assert!(!allowed_url("file:///etc/passwd"));
         assert!(!allowed_url("javascript:alert(1)"));
+    }
+
+    fn claude_session(metadata: Option<serde_json::Value>, deep_link: Option<&str>) -> Session {
+        use crate::models::{Confidence, RuntimeState, RuntimeStatus};
+        Session {
+            id: "s1".into(),
+            provider: Provider::Claude,
+            provider_account_id: None,
+            external_id: Some("session_abc".into()),
+            title: "A Cowork session".into(),
+            project_id: None,
+            working_directory: None,
+            repository: None,
+            branch: None,
+            source: Some("claude-cowork-remote".into()),
+            source_url: None,
+            deep_link: deep_link.map(Into::into),
+            last_activity_at: None,
+            last_opened_at: None,
+            runtime: RuntimeStatus {
+                state: RuntimeState::Unknown,
+                confidence: Confidence::Low,
+                reason: None,
+                detail: None,
+                source: None,
+                action_required: false,
+                since: None,
+                last_observed_at: None,
+            },
+            favorite: false,
+            notes: None,
+            metadata,
+            discovery: "scan".into(),
+            project_locked: false,
+            title_locked: false,
+            source_missing: false,
+            follow_up: None,
+            created_at: "2026-01-01T00:00:00Z".into(),
+            updated_at: "2026-01-01T00:00:00Z".into(),
+        }
+    }
+
+    #[test]
+    fn remote_cowork_takes_the_guarded_app_path() {
+        // Flagged remote + unverified → never a deep link, even if a (stale) link were present.
+        let flagged = claude_session(
+            Some(serde_json::json!({
+                "surface": "cowork", "remote": true, "openUnverified": true,
+                "openCandidate": "claude://claude.ai/cowork_sessions/session_abc"
+            })),
+            None,
+        );
+        assert_eq!(claude_open_decision(&flagged), ClaudeOpen::GuardedApp);
+
+        // A cowork session with no deep link is also guarded.
+        let no_link = claude_session(Some(serde_json::json!({ "surface": "cowork" })), None);
+        assert_eq!(claude_open_decision(&no_link), ClaudeOpen::GuardedApp);
+
+        // A normal local cowork session with a verified deep link opens via the link.
+        let local = claude_session(
+            Some(serde_json::json!({ "surface": "cowork" })),
+            Some("claude://claude.ai/local_sessions/local_x"),
+        );
+        assert_eq!(claude_open_decision(&local), ClaudeOpen::DeepLink);
+
+        // A plain chat with a deep link and no cowork metadata opens via the link.
+        let chat = claude_session(None, Some("claude://claude.ai/chat/abc"));
+        assert_eq!(claude_open_decision(&chat), ClaudeOpen::DeepLink);
     }
 }

@@ -72,6 +72,8 @@ export function openDescription(s: Session): string {
     case "codex":
       return "Open thread in Codex";
     case "claude":
+      // Remote Cowork: the deep link is unverified, so Hoku only offers to open Claude Desktop.
+      if (s.metadata?.remote && s.metadata?.openUnverified) return "Open Claude Desktop";
       return s.metadata?.surface === "cowork" ? "Open in Claude Cowork" : "Open conversation in Claude";
   }
 }
@@ -95,5 +97,6 @@ export const ADAPTER_LABELS: Record<string, string> = {
   "claude-code-transcripts": "Claude Code",
   "codex-state-db": "Codex",
   "claude-cowork": "Claude Cowork",
+  "claude-cowork-remote": "Claude Cowork",
   "claude-chat": "Claude Chats",
 };
