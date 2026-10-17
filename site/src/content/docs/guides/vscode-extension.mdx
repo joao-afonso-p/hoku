@@ -44,7 +44,7 @@ The first time Hoku asks VS Code to show a terminal, VS Code asks:
 
 Choose **Open**, and tick **Do not ask me again** so it doesn't ask on every click. This is VS Code's own question, and it's asked once per profile. Hoku never changes VS Code's settings to skip it.
 
-**Allow Hoku in VS Code** in the setup sheet brings VS Code forward and asks this question in the front window, so you see it. If you skip that step, the question can appear in a VS Code window behind other windows, and Go to terminal can't finish until you answer it. In that case Hoku tells you, and offers **Finish VS Code setup**. After choosing **Open**, click Go to terminal again.
+**Allow Hoku in VS Code** in the setup sheet brings VS Code forward and asks this question in the front window, so you see it. When it says *Connected*, VS Code let the link through; Hoku can't tell whether you ticked **Do not ask me again**, so if VS Code asks again later, tick it then. If you skip that step, the question can appear in a VS Code window behind other windows, and Go to terminal can't finish until you answer it. In that case Hoku tells you, and offers **Finish VS Code setup**. After choosing **Open**, click Go to terminal again.
 
 ## What it shares, and what it never reads
 
@@ -57,7 +57,7 @@ The extension and Hoku talk only through a private folder on your Mac:
 It's readable only by you (folders 0700, files 0600), and holds:
 
 - **one small file per VS Code window**, with the process numbers of its open terminals, the VS Code window number, the VS Code and extension versions and timestamps. It's removed when the window closes.
-- **one request per click**, written by Hoku, and **one reply**, written by the extension, with status words like *shown* and timestamps. They live a few seconds and Hoku deletes them. Anything older than a minute is cleaned up.
+- **one request per click**, written by Hoku, and **one reply**, written by the extension, with status words like *shown* and timestamps. They live a few seconds and Hoku deletes them. Anything older than a minute is cleaned up the next time Hoku goes to a VS Code terminal, checks the extension, or runs the setup step.
 
 **Never read or shared:** terminal contents or output, terminal names, file names, workspace or folder paths, working directories, your VS Code settings. The extension never types into a terminal and never runs commands.
 
@@ -72,6 +72,7 @@ Nothing from this folder goes into Hoku's index, and nothing leaves your Mac: ne
   - **Sessions in the Claude Code extension's panel**, rather than in a terminal. Go to terminal brings VS Code forward, as before.
   - **tmux inside a VS Code terminal.** Hoku still can't switch to tmux.
   - **Two copies of VS Code of the same kind running at once**, for example one started with a custom `--user-data-dir`. Hoku can't tell which copy to ask, so it doesn't guess.
+- **Known limit:** if macOS is set not to switch desktops when you switch apps, Hoku can only check that *some* VS Code window is on the current desktop, not the session's own window.
 
 ## When it can't
 
@@ -82,10 +83,15 @@ Go to terminal always brings VS Code forward. When it can't select the session's
 | *Switched to this session's terminal in VS Code* | Nothing: you're there. |
 | *Switched to VS Code, where this session is running. Hoku couldn't select its window and terminal.* | The extension isn't installed, or no VS Code window is reporting. [Install it](#install), or reload VS Code's windows. |
 | *Switched to VS Code, but it didn't confirm the session's window. VS Code may be asking whether to allow the Hoku extension to open a link: choose Open, then click Go to terminal again.* | Look for VS Code's question, choose **Open** and tick **Do not ask me again**, then click again. **Finish VS Code setup** asks it in the front window. |
-| *Switched to VS Code, but it didn't confirm the session's window and terminal. Pick it there.* | VS Code didn't answer in time. Pick the terminal yourself. If it keeps happening, reload that VS Code window. |
+| *Switched to VS Code, but it didn't confirm the session's window and terminal. Pick it there.* | VS Code didn't answer in time. It may still be asking whether to allow the link: **Finish VS Code setup** checks. Otherwise pick the terminal yourself, and if it keeps happening, reload that VS Code window. |
+| *Switched to VS Code, but Hoku couldn't send the request to select the session's window and terminal. Pick it there.* | Hoku couldn't write its request or open VS Code's link. Pick the terminal yourself. |
 | *Selected the session's terminal in VS Code, but couldn't confirm its window came forward.* | The terminal is selected, but the window may be behind another one. Bring it forward yourself. |
 | *The session is in VS Code on another desktop* | The window is on another desktop (Space). See [Another desktop](/hoku/guides/opening-sessions/#when-hoku-cant-switch-there). |
 | *Switched to VS Code, but the session's window didn't have its terminal any more. Pick it there.* | The terminal or window closed or reloaded since Hoku last heard from it. Pick it in VS Code. |
+| *Switched to VS Code, but the request reached the window too late. …* | VS Code was busy. Click Go to terminal again, or pick the terminal yourself. |
+| *Switched to VS Code, but a different window answered than the one holding the session. …* | The window was reloaded or replaced. Pick the terminal yourself. |
+| *Switched to VS Code. The session's window is a remote window, where Hoku can't select terminals. …* | Remote windows aren't supported. Pick the terminal yourself. |
+| *A newer Go to terminal click took over this VS Code window.* | You clicked again before VS Code answered. The newer click decides where you land. |
 | *Switched to VS Code. This session's window isn't reporting to Hoku (reload it, or check the Hoku extension is installed in that VS Code profile).* | The window uses a profile without the extension, is a remote window, or hasn't been reloaded since you installed it. |
 | *Switched to VS Code. Hoku couldn't tell which window holds this session, so it didn't pick one.* | Two copies of VS Code are running, or more than one window claims the terminal. Pick it there. |
 

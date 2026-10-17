@@ -69,7 +69,7 @@ Selecting the exact VS Code window and terminal needs the optional [Hoku extensi
 - **"VS Code may be asking whether to allow the Hoku extension to open a link"**: find VS Code's *Allow 'Hoku' extension to open this URI?* question, choose **Open**, tick **Do not ask me again**, and click Go to terminal again. **Finish VS Code setup** asks it in the front window.
 - **"This session's window isn't reporting to Hoku"**: reload that VS Code window, and check the extension is installed in that window's VS Code profile. Remote windows (SSH, containers, WSL) never report.
 - **"Hoku couldn't tell which window holds this session"**: two copies of VS Code are running at once. Hoku doesn't guess.
-- **"didn't confirm the session's window and terminal"** or **"didn't have its terminal any more"**: the window was busy, reloading or closed. Pick the terminal yourself, and try again later.
+- **"didn't confirm the session's window and terminal"**, **"didn't have its terminal any more"**, **"reached the window too late"** or **"a different window answered"**: the window was busy, reloading or closed. Pick the terminal yourself, and try again later. If VS Code is still asking whether to allow the link, **Finish VS Code setup** brings that question forward.
 
 Sessions in the Claude Code extension's panel, rather than a terminal, always get VS Code brought forward without a window or terminal picked. See [VS Code extension](/hoku/guides/vscode-extension/#when-it-cant) for every message.
 

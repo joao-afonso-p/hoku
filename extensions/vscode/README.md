@@ -58,7 +58,9 @@ When you click **Go to terminal**, Hoku leaves a one-time request in the same fo
 a `vscode://joao-afonso-p.hoku-vscode/...` link. The extension checks the request, shows the
 matching terminal, and writes back a short reply: the window number, a status word such as
 *shown*, and timestamps. Requests and replies live only a few seconds; Hoku deletes them, and
-anything older than a minute is cleaned up.
+cleans up anything older than a minute the next time it goes to a VS Code terminal, checks the
+extension or runs the setup step. If you click again before VS Code answers, the newer click
+wins and the older one is dropped.
 
 Nothing leaves your Mac. Neither the extension nor Hoku makes network requests, and Hoku
 doesn't keep any of this in its index.
@@ -79,12 +81,14 @@ doesn't keep any of this in its index.
 - If two copies of VS Code of the same kind run at once (for example one started with a
   custom `--user-data-dir`), Hoku can't tell which one to ask, so it doesn't guess.
 - A session inside tmux in a VS Code terminal is still one Hoku can't switch to.
+- With macOS set not to switch desktops on activation, Hoku can only check that *some* VS Code
+  window is on the current desktop, not the session's own window.
 
 ## Uninstall
 
 In VS Code, open the Extensions view, find **Hoku**, and choose **Uninstall** (in each
 profile where you installed it). Each window removes its file when the extension stops; Hoku
-cleans up anything left behind.
+cleans up anything left behind the next time it checks VS Code.
 
 ## License
 

@@ -30,7 +30,9 @@ Install paths:
   Hoku runs VS Code's own CLI from the app bundle, with fixed arguments and no shell:
   `<VS Code.app>/Contents/Resources/app/bin/code --install-extension <Hoku.app>/Contents/Resources/vscode/hoku-vscode.vsix --force`
   (`bin/code-insiders` for Insiders). The app is found by bundle id, with fallbacks to
-  `/Applications` and `~/Applications`.
+  `/Applications` and `~/Applications`. `bin/code` is a shell script that starts VS Code's
+  own binary, so Hoku runs it in its own process group and, on a timeout (10 s to list, 120 s
+  to install), kills the whole group.
 - **By hand.** "Extensions: Install from VSIX…" in VS Code, pointing at the same VSIX.
 
 Once installed, there's no per-project setup.
@@ -78,7 +80,8 @@ VS Code link that macOS's LaunchServices delivers.
 ```
 
 - `vscode-bridge/` and its subfolders are created with mode 0700, and both sides `chmod` them to
-  0700. `com.hoku.app` itself is never chmod'ed.
+  0700. `com.hoku.app` itself is never chmod'ed. Both sides `lstat` each bridge folder first
+  and refuse one that is a symlink, isn't a folder, or belongs to another user.
 - Every file is mode 0600 and written atomically: `<name>.tmp-<8 hex>` opened with `wx` and
   0600, then renamed to the final name.
 - The extension finds the folder from `os.homedir()`, Hoku from `association::home_dir()`.
@@ -143,16 +146,26 @@ schemes.
 3. Claim the request: `lstat requests/<id>.json` must be a regular file (not a symlink) owned by
    the current uid and ≤ 4096 bytes. Rename it to `requests/<id>.claimed` (single use; a failed
    rename means `expired`). Read it, then delete the `.claimed` file. It's `expired` unless
-   `schema` is 1, `id` and `kind` match the URI, `createdAt` is within now − 15 s … now + 2 s,
-   and, for focus, `windowId` is this window's and `pid` is a positive integer.
+   `schema` is 1, `id` and `kind` match the URI, `createdAt` is within now − 15 s … now + 2 s
+   (now − 75 s for a ping, since VS Code's trust dialog runs before `handleUri` and Hoku waits
+   60 s for it), and, for focus, `windowId` is this window's and `pid` is a positive integer.
 4. `/ping`: reply `pong`. No terminal is touched.
-5. `/focus`: in a remote window reply `remote`. Otherwise find the terminal with no
-   `exitStatus` whose `processId === pid` (`not-found` if none), call `terminal.show(false)` and
-   record `shownAt`.
+5. `/focus`: in a remote window reply `remote`. Otherwise this request becomes the window's
+   newest focus request, superseding any older one still in progress. Find the terminal with
+   no `exitStatus` whose `processId === pid` (each `processId` is awaited for at most 1 s;
+   `not-found` if none), call `terminal.show(false)` and record `shownAt`.
 6. Focus acknowledgement: if `window.state.focused` is already true right after `show()`,
    `focusedAt = now`. Otherwise wait up to 1.5 s for `onDidChangeWindowState` with
    `focused: true`. On timeout `focusedAt` is `null`.
 7. Write the reply, set `uriHandledBefore`, and republish the record.
+
+**Superseded requests.** Two clicks that reach the same window close together would otherwise
+both see the one focus event VS Code applies and both report it. So a newer valid focus
+request (one that passed steps 2–3) supersedes older ones in that window: an older request
+still looking for its terminal replies `superseded` without showing it, and one already
+waiting for focus stops waiting and replies `superseded` with `focusedAt: null`. Hoku never
+treats `superseded` as precise and doesn't activate VS Code for it, since the newer click is
+bringing the window forward.
 
 The extension never calls `sendText`, never reads terminal buffers, never runs commands and
 never writes a VS Code setting.
@@ -164,18 +177,23 @@ never writes a VS Code setting.
   "status": "shown", "shownAt": 1700000000100, "focusedAt": 1700000000300, "repliedAt": 1700000000310 }
 ```
 
-`status` is one of `shown`, `not-found`, `wrong-window`, `expired`, `remote` or `pong`.
+`status` is one of `shown`, `not-found`, `wrong-window`, `expired`, `remote`, `superseded`
+or `pong`.
 `windowId` and `hostPid` are always the replying window's own. `shownAt` and `focusedAt` are
 `null` unless set.
 
 ### Lifetimes
 
 - Hoku deletes `requests/<id>.json`, `requests/<id>.claimed` and `replies/<id>.json` when it
-  stops waiting, whatever the outcome (3 s for focus, 60 s for ping). A late reply, or a trust
-  dialog approved after the timeout, therefore does nothing.
-- Before each attempt Hoku garbage-collects anything in `requests/` or `replies/` older than
-  60 s, and window records whose extension host is dead or whose start time doesn't match. It
-  never follows symlinks.
+  stops waiting, whatever the outcome (4.5 s for focus, 60 s for ping). A late reply, or a
+  trust dialog approved after the timeout, therefore does nothing.
+- On every Go to terminal in VS Code (before planning), every extension status check and every
+  setup ping, Hoku garbage-collects anything in `requests/` or `replies/` older than 60 s, and
+  window records whose extension host is dead or whose start time doesn't match. It never
+  follows symlinks.
+- When Hoku reads a record or reply it checks the file (regular, owned by the effective uid,
+  within the size limit) with `lstat`, opens it with `O_NOFOLLOW`, and repeats the checks on
+  the open handle.
 - The extension deletes its window record on `deactivate`.
 
 Nothing from the bridge is stored in `hub.sqlite`.
@@ -232,6 +250,11 @@ A record is **live** for a flavour when its `scheme` matches, `hostPid` is a run
   it stays "can't switch".
 - The extension and the trust checkbox are per VS Code profile.
 - Forks are unsupported: their process names and schemes don't match.
+- The Spaces check after a confirmed focus asks whether *any* on-screen VS Code window is on
+  the current desktop, not the targeted one: all VS Code windows belong to one process, and
+  VS Code's `windowId` doesn't map to a macOS window number. With the macOS switch setting off,
+  a session window on another desktop can therefore count as Precise when another VS Code
+  window is on this one.
 
 ## Focus sequencing
 
@@ -239,32 +262,38 @@ The precise path is the only path that can produce "Switched to this session's t
 Code". Generic activation is a fallback that runs only after the attempt has finished or timed
 out, never interleaved with it.
 
-0. **`yield_to(HOST_BUNDLES)`.** `commands::open_session` (and `go_to_client`) first yields
+0. **Generation.** `commands::open_session` takes the next open generation. A click that's
+   superseded by a newer open (of any session) before its result comes back never runs
+   `bring_forward`, so a slow attempt's fallback can't activate VS Code over the newer click.
+1. **`yield_to(HOST_BUNDLES)`.** `commands::open_session` (and `go_to_client`) then yields
    activation on the main thread while Hoku is still frontmost. Since macOS 14 activation is
    cooperative, and this yield is what lets VS Code's own focus request succeed.
-1. **Plan** (above). Anything but `Precise` goes straight to the fallback without opening a URI.
-2. **Spaces pre-check.** If precise navigation can't even be tried and the existing Spaces
+2. **Plan** (above), after garbage-collecting the bridge folder. Anything but `Precise` goes
+   straight to the fallback without opening a URI.
+3. **Spaces pre-check.** If precise navigation can't even be tried and the existing Spaces
    condition applies (Hoku isn't full screen, the macOS switch setting is off, VS Code has no
    window on the current desktop), the result stays today's "on another desktop" hint.
-3. **Attempt** (`vscode_bridge::attempt`): garbage-collect, ensure the folders, write
+4. **Attempt** (`vscode_bridge::attempt`): ensure the folders, write
    `requests/<id>.json`, then open the focus URI with **`/usr/bin/open -g`**. `-g` delivers the
    URL without activating VS Code's last-active window, so the only activation is VS Code
    focusing the targeted window itself.
-4. **VS Code's own force-focus.** VS Code routes the URL to the window named by `windowId`,
+5. **VS Code's own force-focus.** VS Code routes the URL to the window named by `windowId`,
    runs the extension's handler, then calls `focusWindow({ mode: FocusMode.Force })` on that
    window (see A1).
-5. **The reply.** The extension shows the terminal, waits for the window to report focus, and
+6. **The reply.** The extension shows the terminal, waits for the window to report focus, and
    writes the reply with `shownAt` and `focusedAt`. Hoku polls `replies/<id>.json` every 50 ms
-   for up to 3 s.
-6. **Judging.** Precise only if all of these hold: the reply is exactly `replies/<this id>.json`;
+   for up to 4.5 s: the extension's worst case is up to 1 s for terminal process ids plus up to
+   1.5 s for focus, plus VS Code's own latency.
+7. **Judging.** Precise only if all of these hold: the reply is exactly `replies/<this id>.json`;
    `id` and `kind` match; `windowId` and `hostPid` equal the targeted record's; `status` is
    `shown`; `createdAt ≤ shownAt ≤ focusedAt`; and the Spaces check passes (Hoku full screen,
    or the switch setting on, or VS Code has a window on the current desktop). Hoku then deletes
    the request and reply.
-7. **Result.** On the precise path `OpenResult.activate` stays `None`, so `bring_forward` (and
-   its `open -b` retry) never runs. Every other outcome sets `activate = Some(bundle)`, and
-   `bring_forward` activates VS Code generically after `attempt` has returned, with a message
-   that doesn't claim the window or terminal.
+8. **Result.** On the precise path `OpenResult.activate` stays `None`, so `bring_forward` (and
+   its `open -b` retry) never runs, and `OpenResult.exact` is true. A `superseded` reply also
+   leaves `activate` empty. Every other outcome sets `activate = Some(bundle)`, and
+   `bring_forward` activates VS Code generically after `attempt` has returned (if no newer open
+   started meanwhile), with a message that doesn't claim the window or terminal.
 
 ### Messages
 
@@ -272,6 +301,8 @@ out, never interleaved with it.
 opens the Spaces help, `vscode-extension` opens the setup sheet once and then adds a **Set up
 precise navigation** toast action (unless the user chose **Don't suggest this again**), and
 `vscode-setup` adds a **Finish VS Code setup** action that opens the sheet at the Allow step.
+Only an `exact` result (the precise rows) is a success toast; every other outcome, with or
+without a hint, is an info toast.
 
 | Outcome | Generic activation | Hint | Message |
 |---|---|---|---|
@@ -279,9 +310,15 @@ precise navigation** toast action (unless the user chose **Don't suggest this ag
 | Precise (`claude agents` dashboard) | no | none | "Switched to `claude agents` in {name}. Pick this session there." |
 | Shown, focus not confirmed | yes | none | "Selected the session's terminal in {name}, but couldn't confirm its window came forward." |
 | Shown and focused, Spaces check fails | yes | `spaces-setting` | "The session is in {name} on another desktop" |
-| No reply in 3 s, never handled a link before | yes | `vscode-setup` | "Switched to {name}, but it didn't confirm the session's window. {name} may be asking whether to allow the Hoku extension to open a link: choose Open, then click Go to terminal again." |
-| No reply in 3 s (handled before), or `open` failed | yes | none | "Switched to {name}, but it didn't confirm the session's window and terminal. Pick it there." |
-| `not-found`, `wrong-window`, `expired`, `remote` or an invalid reply | yes | none | "Switched to {name}, but the session's window didn't have its terminal any more. Pick it there." |
+| No reply in 4.5 s, never handled a link before | yes | `vscode-setup` | "Switched to {name}, but it didn't confirm the session's window. {name} may be asking whether to allow the Hoku extension to open a link: choose Open, then click Go to terminal again." |
+| No reply in 4.5 s, a link handled before (the dialog may still be asking: allowing once doesn't tick "Do not ask me again") | yes | `vscode-setup` | "Switched to {name}, but it didn't confirm the session's window and terminal. Pick it there." |
+| Request couldn't be written or `open` failed | yes | none | "Switched to {name}, but Hoku couldn't send the request to select the session's window and terminal. Pick it there." |
+| `not-found` | yes | none | "Switched to {name}, but the session's window didn't have its terminal any more. Pick it there." |
+| `expired` | yes | none | "Switched to {name}, but the request reached the window too late. Pick the session's terminal there, or click Go to terminal again." |
+| `wrong-window`, or a reply bound to another window or request | yes | none | "Switched to {name}, but a different window answered than the one holding the session. Pick it there." |
+| `remote` | yes | none | "Switched to {name}. The session's window is a remote window, where Hoku can't select terminals. Pick it there." |
+| Any other status or an invalid reply | yes | none | "Switched to {name}, but the window's answer didn't match the request. Pick the session's terminal there." |
+| `superseded` (a newer click reached the window first) | no | none | "A newer Go to terminal click took over this {name} window." |
 | Extension not connected | yes | `vscode-extension` | "Switched to {name}, where this session is running. Hoku couldn't select its window and terminal." |
 | Window not reporting | yes | none | "Switched to {name}. This session's window isn't reporting to Hoku (reload it, or check the Hoku extension is installed in that VS Code profile)." |
 | Ambiguous, or two instances | yes | none | "Switched to {name}. Hoku couldn't tell which window holds this session, so it didn't pick one." |
@@ -300,9 +337,11 @@ makes it visible: Hoku yields, requires exactly one running instance of that fla
 `ping` request and opens the ping URI *without* `-g` and without `windowId`. LaunchServices
 brings VS Code forward and the URL goes to the front window, so the dialog appears there. Hoku
 waits up to 60 s for `pong` and reports `ready`, `no-reply`, `not-running` or `two-instances`.
-This step is setup and is never presented as navigation.
+This step is setup and is never presented as navigation. `ready` proves VS Code let the link
+through this once; it can't tell whether **Do not ask me again** was ticked, so the sheet says
+so, and a later focus timeout still offers **Finish VS Code setup**.
 
-At click time a pending dialog looks like silence: the 3 s timeout produces the `vscode-setup`
+At click time a pending dialog looks like silence: the 4.5 s timeout produces a `vscode-setup`
 message. Since the request is deleted on timeout, approving the dialog afterwards does nothing,
 and the message says to click Go to terminal again.
 
@@ -394,7 +433,10 @@ version is older than the bundled one.
 - **Extension** (`extensions/vscode/src/bridge.test.ts`, vitest, part of `pnpm test`): record
   building (exited and remote terminals excluded, no names), atomic 0600 writes, URI parsing,
   request claiming (freshness, ownership, symlinks, size, id format, `windowId` mismatch,
-  single use), reply statuses, the debounced publisher, and the A1 ordering with a fake host:
+  single use, the longer ping age), private folders that refuse symlinks, reply statuses,
+  superseded requests (a newer click in the same window wins; the older one never reports
+  focus or shows a late terminal), the debounced publisher, and the A1 ordering with a fake
+  host:
   `handleUri` returns a non-thenable before any focus and before any reply exists; focus fired
   afterwards yields `shownAt ≤ focusedAt`; a pessimistic host that awaits the return value
   doesn't hang; focus that never comes gives `focusedAt: null`; stale focus from before
@@ -403,11 +445,15 @@ version is older than the bundled one.
   `commands.rs`; `cargo test`): anchors from inline `ps` strings, record validation, every
   `plan` variant and guard, the attempt flow with a recording fake `Desktop` (success opens
   exactly one `open -g` URL and leaves no files; leftover replies from another click are
-  ignored; every rejection rule; Spaces), the URL validator against injection attempts, file
-  modes, the exhaustive outcome → `OpenResult` table (only the precise row has
-  `activate == None` and says "Switched to this session's terminal"), the install argument
-  builder, version parsing, status assembly and the ping flow.
-- **Frontend** (vitest): the status-line helper and `routeOpenResult` toast and sheet routing.
+  ignored; every rejection rule, including `superseded`; Spaces), the URL validator against
+  injection attempts, file modes, the exhaustive outcome → `OpenResult` table (only the
+  precise rows are `exact` and say "Switched to this session's terminal"; only they and
+  `superseded` have `activate == None`), the open generation that keeps an older click from
+  activating over a newer one, garbage collection before focus and setup, the CLI timeout
+  killing the whole process group, the install argument builder, version parsing, status
+  assembly and the ping flow.
+- **Frontend** (vitest): the status-line helper and `routeOpenResult` toast and sheet routing
+  (success only for `exact` results).
 - Tests never call the real `open`, `ps` or `code`, and never touch a real VS Code profile.
 
 ### Manual testing
