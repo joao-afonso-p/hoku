@@ -5,6 +5,7 @@ import type { StatusKey } from "../features/runtime/status";
 import type { SessionFilter } from "../features/sessions/filter";
 import { api, type FollowUpInput, type ProjectPatch, type ProjectResumePatch, type SessionPatch } from "../lib/api";
 import type { HubError, NotificationTarget, Session } from "../lib/types";
+import { routeOpenResult } from "./openRoute";
 import { getState, setState, type ListMode, type Overlay, type Toast } from "./store";
 
 /** Settings key: when the Activity timeline was last looked at ("N finished since"). */
@@ -218,8 +219,14 @@ export function escape() {
 export async function openSession(session: Session) {
   try {
     const r = await api.openSession(session.id);
-    if (r.hint === "spaces-setting") openOverlay({ kind: "spaces-help", app: ["VS Code Insiders", "VS Code", "Terminal"].find((a) => r.message.includes(a)) ?? "iTerm" });
-    else toast({ tone: "success", message: r.message });
+    const route = routeOpenResult(r, getState().data.settings);
+    if (route.toast) {
+      const { action, ...t } = route.toast;
+      if (action) toast({ ...t, action: { label: action.label, run: () => openOverlay(action.overlay) } }, 8000);
+      else toast(t, t.tone === "info" ? 5000 : undefined);
+    }
+    if (route.overlay) openOverlay(route.overlay);
+    if (route.setSetting) await api.setSetting(route.setSetting.key, route.setSetting.value).catch(() => undefined);
     void reload();
   } catch (e) {
     // No "open another copy" escape hatch: two processes on one live session conflict.
