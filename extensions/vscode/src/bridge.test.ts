@@ -16,6 +16,7 @@ import {
   claimRequest,
   createDebouncedRunner,
   createUriHandler,
+  PING_MAX_AGE_MS,
   ensureBridgeDirs,
   hostStartedAt,
   parseBridgeUri,
@@ -179,6 +180,25 @@ describe("atomic writes", () => {
     expect(await mode(appDir)).toBe(0o755);
   });
 
+  it("refuses a symlinked bridge folder instead of following it", async () => {
+    const elsewhere = path.join(home, "elsewhere");
+    await fs.mkdir(elsewhere, { mode: 0o755 });
+    await fs.mkdir(path.dirname(paths.root), { recursive: true });
+    await fs.symlink(elsewhere, paths.root);
+    await expect(ensureBridgeDirs(paths)).rejects.toThrow();
+    expect(await fs.readdir(elsewhere)).toEqual([]);
+    expect(await mode(elsewhere)).toBe(0o755);
+  });
+
+  it("refuses a bridge subfolder that is a file or belongs to another user", async () => {
+    await fs.mkdir(paths.root, { recursive: true });
+    await fs.writeFile(paths.windows, "x");
+    await expect(ensureBridgeDirs(paths)).rejects.toThrow();
+    await fs.rm(paths.windows);
+    await expect(ensureBridgeDirs(paths, UID + 1)).rejects.toThrow();
+    await expect(ensureBridgeDirs(paths, UID)).resolves.toBeUndefined();
+  });
+
   it("writes the temp file with wx, so an existing temp name fails", async () => {
     await ensureBridgeDirs(paths);
     await fs.writeFile(path.join(paths.replies, "a.json.tmp-deadbeef"), "x");
@@ -284,6 +304,21 @@ describe("claimRequest", () => {
     expect(await at(now + 2_000)()).toBe(true);
     expect(await at(now - 15_001)()).toBe(false);
     expect(await at(now + 2_001)()).toBe(false);
+  });
+
+  it("gives a ping 75 s, longer than Hoku's 60 s wait through VS Code's link prompt", async () => {
+    const now = 1_700_000_000_000;
+    const ping = async (createdAt: number) => {
+      await writeRequest(ID, { schema: 1, id: ID, kind: "ping", createdAt });
+      return (await claim({ kind: "ping", windowId: null, now: () => now })).ok;
+    };
+    expect(PING_MAX_AGE_MS).toBeGreaterThanOrEqual(60_000);
+    expect(await ping(now - 60_000)).toBe(true);
+    expect(await ping(now - 75_000)).toBe(true);
+    expect(await ping(now - 75_001)).toBe(false);
+    // Focus requests keep their short age.
+    await writeRequest(ID, focusRequest({ createdAt: now - 20_000 }));
+    expect((await claim({ now: () => now })).ok).toBe(false);
   });
 
   it.each([
@@ -549,6 +584,88 @@ describe("A1 ordering: handleUri returns before VS Code focuses the window", () 
       timeoutMs: 1_000,
     });
     expect(value).toBe(60);
+  });
+});
+
+describe("concurrent focus requests in one window", () => {
+  it("a newer request supersedes a pending one, which never reports focus", async () => {
+    const { host, handler, terminal } = setup();
+    await writeRequest(ID, focusRequest());
+    const firstShown = terminal.shown();
+    handler.handleUri(focusUri(3, ID));
+    await firstShown;
+
+    await writeRequest(ID2, focusRequest({ id: ID2 }));
+    const secondShown = terminal.shown();
+    handler.handleUri(focusUri(3, ID2));
+    await secondShown;
+    // The one focus event VS Code applies belongs to the newer click only.
+    host.setFocused(true);
+    await handler.whenIdle();
+
+    const older = (await readReply(ID))!;
+    const newer = (await readReply(ID2))!;
+    expect(older).toMatchObject({ status: "superseded", focusedAt: null });
+    expect(older.shownAt).not.toBeNull();
+    expect(newer).toMatchObject({ status: "shown" });
+    expect(newer.focusedAt).not.toBeNull();
+    expect(terminal.shows).toHaveLength(2);
+  });
+
+  it("a request superseded before it shows its terminal doesn't show it", async () => {
+    let release: (pid: number) => void = () => undefined;
+    const slow: FacadeTerminal & { shows: number } = {
+      exited: false,
+      processId: new Promise<number>((resolve) => (release = resolve)),
+      shows: 0,
+      show() {
+        this.shows += 1;
+      },
+    };
+    const host = new FakeHost();
+    host.terminals = () => [slow as unknown as FakeTerminal];
+    host.focused = true;
+    const handler = createUriHandler(host, { paths, uid: UID, hostPid: 123, now: Date.now, focusTimeoutMs: 100, processIdTimeoutMs: 1_000 });
+    await writeRequest(ID, focusRequest());
+    handler.handleUri(focusUri(3, ID));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await writeRequest(ID2, focusRequest({ id: ID2 }));
+    handler.handleUri(focusUri(3, ID2));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    release(456);
+    await handler.whenIdle();
+    expect(await readReply(ID)).toMatchObject({ status: "superseded", shownAt: null, focusedAt: null });
+    expect(await readReply(ID2)).toMatchObject({ status: "shown" });
+    expect(slow.shows).toBe(1);
+  });
+
+  it("an expired or wrong-window request doesn't supersede a valid one", async () => {
+    const { host, handler, terminal } = setup();
+    await writeRequest(ID, focusRequest());
+    const shown = terminal.shown();
+    handler.handleUri(focusUri(3, ID));
+    await shown;
+    handler.handleUri(focusUri(3, ID2)); // no request file: expired
+    handler.handleUri(focusUri(4, ID2)); // another window
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    host.setFocused(true);
+    await handler.whenIdle();
+    expect(await readReply(ID)).toMatchObject({ status: "shown" });
+    expect((await readReply(ID))!.focusedAt).not.toBeNull();
+  });
+
+  it("waitForFocus resolves null at once when aborted", async () => {
+    const controller = new AbortController();
+    const pending = waitForFocus({
+      isFocused: () => false,
+      onDidChangeFocus: () => ({ dispose() {} }),
+      shownAt: 0,
+      now: () => 1,
+      timeoutMs: 10_000,
+      signal: controller.signal,
+    });
+    controller.abort();
+    expect(await pending).toBeNull();
   });
 });
 

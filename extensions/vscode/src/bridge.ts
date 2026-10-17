@@ -12,8 +12,13 @@ import * as path from "node:path";
 export const SCHEMA = 1;
 export const EXTENSION_AUTHORITY = "joao-afonso-p.hoku-vscode";
 export const MAX_REQUEST_BYTES = 4096;
-/** A request is valid when `createdAt` is in [now - 15000, now + 2000]. */
+/** A focus request is valid when `createdAt` is in [now - 15000, now + 2000]. */
 export const REQUEST_MAX_AGE_MS = 15_000;
+/**
+ * A ping may be older: VS Code asks the user whether to allow the link before it calls
+ * `handleUri`, and Hoku waits 60 s for that answer, so a ping stays valid for 75 s.
+ */
+export const PING_MAX_AGE_MS = 75_000;
 export const REQUEST_MAX_FUTURE_MS = 2_000;
 export const FOCUS_ACK_TIMEOUT_MS = 1_500;
 export const PUBLISH_DEBOUNCE_MS = 200;
@@ -55,11 +60,25 @@ export function windowRecordPath(paths: BridgePaths, hostPid: number): string {
 
 /**
  * Creates the bridge folders (mode 0700) and `chmod 0700`s `vscode-bridge` and its
- * subfolders. Never chmods `com.hoku.app` itself.
+ * subfolders. Never chmods `com.hoku.app` itself. Like Hoku, it refuses a bridge folder that
+ * is a symlink, isn't a folder, or belongs to another user, rather than following it.
  */
-export async function ensureBridgeDirs(paths: BridgePaths): Promise<void> {
+export async function ensureBridgeDirs(
+  paths: BridgePaths,
+  uid: number | undefined = typeof process.getuid === "function" ? process.getuid() : undefined,
+): Promise<void> {
+  // `com.hoku.app` (and anything above it) may be created, but is never chmodded.
+  await fs.mkdir(path.dirname(paths.root), { recursive: true, mode: 0o700 });
   for (const dir of [paths.root, paths.windows, paths.requests, paths.replies]) {
-    await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+    try {
+      await fs.mkdir(dir, { mode: 0o700 });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+    const stat = await fs.lstat(dir);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || (uid !== undefined && stat.uid !== uid)) {
+      throw new Error("the bridge folder isn't a private folder");
+    }
     await fs.chmod(dir, 0o700);
   }
 }
@@ -315,7 +334,8 @@ export function validateRequest(
   const createdAt = r.createdAt;
   if (typeof createdAt !== "number" || !Number.isSafeInteger(createdAt)) return null;
   const now = expected.now();
-  if (createdAt < now - REQUEST_MAX_AGE_MS || createdAt > now + REQUEST_MAX_FUTURE_MS) return null;
+  const maxAge = expected.kind === "ping" ? PING_MAX_AGE_MS : REQUEST_MAX_AGE_MS;
+  if (createdAt < now - maxAge || createdAt > now + REQUEST_MAX_FUTURE_MS) return null;
   if (expected.kind === "ping") {
     return { schema: SCHEMA, id: expected.id, kind: "ping", createdAt };
   }
@@ -327,7 +347,11 @@ export function validateRequest(
 // ---------------------------------------------------------------------------------------
 // replies/<id>.json
 
-export type ReplyStatus = "shown" | "not-found" | "wrong-window" | "expired" | "remote" | "pong";
+/**
+ * `superseded`: a newer focus request reached this window before this one finished, so this
+ * one never confirms focus (and may not have shown its terminal at all).
+ */
+export type ReplyStatus = "shown" | "not-found" | "wrong-window" | "expired" | "remote" | "superseded" | "pong";
 
 export interface Reply {
   schema: 1;
@@ -382,13 +406,15 @@ export interface FocusWaitOptions {
   shownAt: number;
   now: () => number;
   timeoutMs?: number;
+  /** Aborted when a newer focus request supersedes this one: resolves null at once. */
+  signal?: AbortSignal;
 }
 
 /**
  * Resolves with the moment the window is focused (at or after `shownAt`), or null when it
  * isn't within `timeoutMs` (1500 ms by default). The current state counts if it's already
  * focused when this is called (right after `show()`); otherwise it waits for a change to
- * focused.
+ * focused. An aborted `signal` resolves null.
  */
 export function waitForFocus(options: FocusWaitOptions): Promise<number | null> {
   const timeoutMs = options.timeoutMs ?? FOCUS_ACK_TIMEOUT_MS;
@@ -396,13 +422,17 @@ export function waitForFocus(options: FocusWaitOptions): Promise<number | null> 
     let done = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let subscription: Disposable | undefined;
+    const onAbort = () => finish(null);
     const finish = (value: number | null) => {
       if (done) return;
       done = true;
       if (timer !== undefined) clearTimeout(timer);
       subscription?.dispose();
+      options.signal?.removeEventListener("abort", onAbort);
       resolve(value);
     };
+    if (options.signal?.aborted) return finish(null);
+    options.signal?.addEventListener("abort", onAbort);
     const observeFocus = () => {
       const at = options.now();
       if (at >= options.shownAt) finish(at);
@@ -459,8 +489,29 @@ export interface UriHandlerCore {
   whenIdle(): Promise<void>;
 }
 
+/**
+ * Orders the focus requests one window handles: `begin()` aborts the previous request's
+ * signal, so only the newest click can show its terminal and confirm focus. Two clicks
+ * would otherwise both see the same focus event and both report it.
+ */
+export interface FocusGate {
+  begin(): AbortSignal;
+}
+
+export function createFocusGate(): FocusGate {
+  let current: AbortController | undefined;
+  return {
+    begin() {
+      current?.abort();
+      current = new AbortController();
+      return current.signal;
+    },
+  };
+}
+
 export function createUriHandler(host: HostFacade, ctx: HandlerContext): UriHandlerCore {
   const pending = new Set<Promise<void>>();
+  const gate = createFocusGate();
   return {
     handleUri(uri) {
       const parsed = parseBridgeUri(uri.path, uri.query);
@@ -469,7 +520,7 @@ export function createUriHandler(host: HostFacade, ctx: HandlerContext): UriHand
       // after this synchronous part completes, and it doesn't await what we return.
       const task: Promise<void> = Promise.resolve()
         .then(async () => {
-          await processUri(host, ctx, parsed);
+          await processUri(host, ctx, parsed, gate);
         })
         .catch((error: unknown) => {
           ctx.onError?.(error);
@@ -486,8 +537,17 @@ export function createUriHandler(host: HostFacade, ctx: HandlerContext): UriHand
   };
 }
 
-/** The detached task behind one URI: claim, act, reply, mark handled, republish. */
-export async function processUri(host: HostFacade, ctx: HandlerContext, uri: BridgeUri): Promise<Reply> {
+/**
+ * The detached task behind one URI: claim, act, reply, mark handled, republish. A focus
+ * request superseded (through `gate`) by a newer one replies `superseded` with no focusedAt,
+ * and doesn't show its terminal if it hadn't yet.
+ */
+export async function processUri(
+  host: HostFacade,
+  ctx: HandlerContext,
+  uri: BridgeUri,
+  gate: FocusGate = createFocusGate(),
+): Promise<Reply> {
   const windowId = await host.currentWindowId();
   const reply = (status: ReplyStatus, shownAt: number | null = null, focusedAt: number | null = null) =>
     buildReply({ id: uri.id, kind: uri.kind, windowId, hostPid: ctx.hostPid, status, shownAt, focusedAt, repliedAt: ctx.now() });
@@ -508,7 +568,9 @@ export async function processUri(host: HostFacade, ctx: HandlerContext, uri: Bri
   if (uri.kind === "ping") return send(reply("pong"), true);
   if (host.isRemote()) return send(reply("remote"), true);
 
+  const signal = gate.begin();
   const terminal = await findTerminal(host.terminals(), claim.request.pid!, ctx.processIdTimeoutMs ?? PROCESS_ID_TIMEOUT_MS);
+  if (signal.aborted) return send(reply("superseded"), true);
   if (!terminal) return send(reply("not-found"), true);
 
   terminal.show(false);
@@ -519,7 +581,9 @@ export async function processUri(host: HostFacade, ctx: HandlerContext, uri: Bri
     shownAt,
     now: ctx.now,
     timeoutMs: ctx.focusTimeoutMs,
+    signal,
   });
+  if (signal.aborted) return send(reply("superseded", shownAt, null), true);
   return send(reply("shown", shownAt, focusedAt), true);
 }
 
