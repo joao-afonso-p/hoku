@@ -2,14 +2,23 @@ import { describe, expect, it } from "vitest";
 import type { OpenResult } from "../lib/types";
 import { routeOpenResult } from "./openRoute";
 
-function result(hint: OpenResult["hint"], message = "Switched to this session’s terminal in VS Code"): OpenResult {
-  return { method: "focus", message, hint };
+function result(hint: OpenResult["hint"], message = "Switched to this session’s terminal in VS Code", exact = false): OpenResult {
+  return { method: "focus", message, hint, exact };
 }
 
 describe("routeOpenResult", () => {
-  it("is a success when there is no hint", () => {
-    expect(routeOpenResult(result(null), {})).toEqual({ toast: { tone: "success", message: "Switched to this session’s terminal in VS Code" } });
-    expect(routeOpenResult(result(undefined), {}).toast?.tone).toBe("success");
+  it("is a success only when the open was exact", () => {
+    expect(routeOpenResult(result(null, undefined, true), {})).toEqual({
+      toast: { tone: "success", message: "Switched to this session’s terminal in VS Code" },
+    });
+    expect(routeOpenResult(result(undefined, undefined, true), {}).toast?.tone).toBe("success");
+  });
+
+  it("is information for a partial result without a hint", () => {
+    // e.g. VS Code showed the terminal but didn't confirm focus, or a newer click took over.
+    const r = routeOpenResult(result(null, "Selected the session's terminal in VS Code, but couldn't confirm its window came forward."), {});
+    expect(r).toEqual({ toast: { tone: "info", message: "Selected the session's terminal in VS Code, but couldn't confirm its window came forward." } });
+    expect(routeOpenResult({ method: "focus", message: "x" }, {}).toast?.tone).toBe("info");
   });
 
   it("keeps the Spaces sheet for the desktop setting", () => {

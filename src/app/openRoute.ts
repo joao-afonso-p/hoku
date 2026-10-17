@@ -20,10 +20,11 @@ export interface OpenRoute {
 const SPACES_APPS = ["VS Code Insiders", "VS Code", "Terminal"];
 
 /**
- * Decide what follows "Go to terminal". A hint means the open was an honest partial result
- * (VS Code came forward, but not on the session's own terminal), so it's an info toast; only
- * a result without a hint is a success. The VS Code extension sheet opens by itself once at
- * most; after that the toast offers it, unless the user said not to suggest it again.
+ * Decide what follows "Go to terminal". Only an `exact` result (Hoku did exactly what was
+ * asked, e.g. VS Code confirmed the session's own terminal) is a success toast; everything
+ * else, hinted or not, is an honest partial result and an info toast. The VS Code extension
+ * sheet opens by itself once at most; after that the toast offers it, unless the user said
+ * not to suggest it again.
  */
 export function routeOpenResult(result: OpenResult, settings: Record<string, unknown>): OpenRoute {
   switch (result.hint) {
@@ -43,6 +44,6 @@ export function routeOpenResult(result: OpenResult, settings: Record<string, unk
         toast: { tone: "info", message: result.message, action: { label: "Finish VS Code setup", overlay: { kind: "vscode-extension", step: "setup" } } },
       };
     default:
-      return { toast: { tone: "success", message: result.message } };
+      return { toast: { tone: result.exact === true ? "success" : "info", message: result.message } };
   }
 }

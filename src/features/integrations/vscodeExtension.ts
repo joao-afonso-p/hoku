@@ -47,7 +47,7 @@ export function installLabel(s: VsCodeStatus): string | null {
 export function setupMessage(status: VsCodeSetupResult["status"], name: string): string {
   switch (status) {
     case "ready":
-      return "Ready. Go to terminal now goes straight to the session.";
+      return "Connected: VS Code let the Hoku extension open the link. If it asks again on Go to terminal, choose Open and tick “Do not ask me again”.";
     case "no-reply":
       return `${name} didn’t confirm. If it’s asking, choose Open, then try again.`;
     case "not-running":

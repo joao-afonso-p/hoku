@@ -187,6 +187,11 @@ export interface OpenResult {
   method: "deep-link" | "attach" | "resume" | "focus" | "fallback" | "new";
   message: string;
   hint?: OpenHint | null;
+  /**
+   * The open did exactly what was asked (a deep link, a new or resumed session, the session's
+   * own terminal tab, or VS Code's confirmed precise focus). False for partial results.
+   */
+  exact?: boolean;
 }
 
 /**

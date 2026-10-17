@@ -64,7 +64,9 @@ describe("installLabel", () => {
 
 describe("setupMessage", () => {
   it("explains every ping result", () => {
-    expect(setupMessage("ready", "VS Code")).toBe("Ready. Go to terminal now goes straight to the session.");
+    expect(setupMessage("ready", "VS Code")).toBe(
+      "Connected: VS Code let the Hoku extension open the link. If it asks again on Go to terminal, choose Open and tick “Do not ask me again”.",
+    );
     expect(setupMessage("no-reply", "VS Code")).toBe("VS Code didn’t confirm. If it’s asking, choose Open, then try again.");
     expect(setupMessage("not-running", "VS Code Insiders")).toBe("Open VS Code Insiders first.");
     expect(setupMessage("two-instances", "VS Code")).toBe("More than one VS Code is running, so Hoku can’t tell which one to ask.");
