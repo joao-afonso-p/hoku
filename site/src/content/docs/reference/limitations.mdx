@@ -28,7 +28,11 @@ Hoku is pre-1.0. These are the current limits, most of them set by what each pro
 
 ## Opening sessions
 
-- **VS Code:** Hoku brings VS Code forward but can't select the exact integrated-terminal tab or window. Forks such as Cursor aren't recognized.
+- **VS Code:** selecting the exact window and integrated terminal needs the optional [Hoku extension for VS Code](/hoku/guides/vscode-extension/). Without it, Hoku brings VS Code forward and you pick the tab. Even with it:
+  - **remote windows** (SSH, containers, WSL, Codespaces) and sessions in the **Claude Code extension's panel** only get VS Code brought forward
+  - with **two copies of VS Code** of the same kind running (for example one with a custom `--user-data-dir`), Hoku doesn't guess which one holds the session
+  - the extension and VS Code's one-time *Allow* prompt are **per VS Code profile**
+  - **forks** such as Cursor, VSCodium and Windsurf aren't recognized.
 - **Warp, tmux and other terminals** aren't switched to. Hoku tells you where the session runs instead of starting a second copy.
 - **Terminal gets a window, not a tab**, because Terminal can't open tabs without Accessibility access.
 - **The Cowork link** is checked against Claude Desktop's code and opens without warnings, but it isn't documented by Anthropic.

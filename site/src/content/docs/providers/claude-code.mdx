@@ -32,7 +32,9 @@ Hoku doesn't install Claude Code hooks. Hooks would mean changing your `~/.claud
 
 ## Getting back to a session
 
-**Go to terminal** decides at click time: switch to the tab it's running in, bring VS Code forward, attach to a background session, or resume it with `claude --resume` in a new iTerm tab or Terminal window. See [Getting back to a session](/hoku/guides/opening-sessions/#claude-code-go-to-terminal).
+**Go to terminal** decides at click time: switch to the tab it's running in, switch to its VS Code window and terminal, attach to a background session, or resume it with `claude --resume` in a new iTerm tab or Terminal window. See [Getting back to a session](/hoku/guides/opening-sessions/#claude-code-go-to-terminal).
+
+For VS Code, picking the exact window and terminal needs the optional [Hoku extension for VS Code](/hoku/guides/vscode-extension/), which comes with Hoku. Without it, Hoku brings VS Code forward and you pick the tab.
 
 ## Account
 
@@ -41,6 +43,6 @@ Hoku doesn't install Claude Code hooks. Hooks would mean changing your `~/.claud
 ## Limitations
 
 - **Old transcripts disappear.** Claude Code deletes transcripts after a while (its `cleanupPeriodDays` setting). Hoku keeps those sessions, marked *Transcript no longer on disk* and drawn hollow, but they can't be resumed.
-- **Only iTerm, Terminal and VS Code can be switched to.** Hoku brings VS Code forward but can't pick the exact terminal tab or window. Sessions in Warp, tmux or other terminals aren't switched to. Hoku tells you where the session runs instead of starting a second copy.
+- **Only iTerm, Terminal and VS Code can be switched to.** In VS Code, Hoku picks the exact window and terminal only with the [Hoku extension](/hoku/guides/vscode-extension/) installed, and only in local windows. Sessions in the Claude Code extension's panel and in remote windows get VS Code brought forward, and you pick them. Sessions in Warp, tmux or other terminals aren't switched to. Hoku tells you where the session runs instead of starting a second copy.
 - **Switching tabs needs macOS Automation permission** for iTerm or Terminal, asked once per Hoku version.
 - **VS Code forks** (Cursor, VSCodium, Windsurf) aren't recognized.

@@ -55,6 +55,13 @@ you're credited in the advisory unless you'd rather not be.
   written. Foreign SQLite databases are opened with `SQLITE_OPEN_READ_ONLY` and
   `PRAGMA query_only`. The only database Hoku writes is its own
   `~/Library/Application Support/com.hoku.app/hub.sqlite`.
+- **VS Code bridge.** The optional Hoku VS Code extension (`extensions/vscode/`) and Hoku
+  exchange short-lived files in `~/Library/Application Support/com.hoku.app/vscode-bridge/`
+  (folders 0700, files 0600): terminal process numbers, a VS Code window number, versions,
+  timestamps and status words only. Hoku triggers the extension by opening a
+  `vscode://joao-afonso-p.hoku-vscode/…` URL (or `vscode-insiders://`) built from validated
+  digits and hex; neither side listens on a socket or makes network requests. See
+  [docs/vscode-extension.md](docs/vscode-extension.md#threat-model).
 - **No credentials.** Token and credential files are never opened. Account state comes
   only from `claude auth status` and `codex login status`, and only non-secret fields
   are kept.
@@ -90,6 +97,10 @@ you're credited in the advisory unless you'd rather not be.
   references, `claude://` or `codex://` links)
 - Persisting or leaking transcript content beyond the title and short preview
 - CSP bypasses, script injection into the webview, or misuse of the IPC commands
+- The VS Code bridge: the extension's URI handler (`/focus`, `/ping`) acting on a forged link
+  or a request Hoku didn't write, Hoku trusting a crafted window record or reply, files in
+  `vscode-bridge/` leaking more than process and window numbers, or Hoku opening a bridge URL
+  it didn't build itself
 - The devtools socket being reachable in a release build or from off-host
 - `scripts/install-local.sh` touching user data it shouldn't
 - The release workflow (`.github/workflows/release.yml`) publishing artifacts that weren't

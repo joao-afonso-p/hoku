@@ -15,6 +15,8 @@ Hoku keeps everything in one SQLite database:
 
 The same folder can hold `hub.sqlite-wal` and `hub.sqlite-shm`, which SQLite uses while Hoku runs. **Settings → Privacy** shows the path.
 
+If you use the [VS Code extension](/hoku/guides/vscode-extension/), the same folder also has a `vscode-bridge` folder. It holds only short-lived files: one per open VS Code window, with its terminals' process numbers, and a request and reply per click that Hoku deletes within seconds. It's not part of the index and doesn't need backing up.
+
 The index is outside the app, so installing, updating or reinstalling Hoku never touches it. Provider data (`~/.claude`, `~/.codex`, Claude Desktop's folders) isn't in it, and nothing you do in Hoku changes that data.
 
 ## Back up
@@ -56,6 +58,7 @@ To remove only demo data, use **Settings → Demo data → Remove demo data**.
 4. Optionally, clean up permissions in **System Settings**:
    - **Privacy & Security → Automation**: Hoku's entries for iTerm or Terminal (there may be one per version you used)
    - **Notifications**: Hoku.
+5. If you installed the [VS Code extension](/hoku/guides/vscode-extension/#uninstall), uninstall it in VS Code's Extensions view.
 
 </Steps>
 

@@ -60,6 +60,8 @@ covers verifying a download and what changes on update.
 - **Go to terminal.** One action takes you back: it switches to the iTerm/Terminal tab (or VS
   Code) a Claude Code session runs in, attaches, or resumes it. Codex and Claude sessions open
   in their apps. [Guide](https://joao-afonso-p.github.io/hoku/guides/opening-sessions/)
+  An optional Hoku extension for VS Code, bundled with the app, lets it land on the exact VS
+  Code window and terminal. [Guide](https://joao-afonso-p.github.io/hoku/guides/vscode-extension/)
 - **⌘K** searches every session, project and action.
   [Guide](https://joao-afonso-p.github.io/hoku/guides/search/)
 - **Follow up**, your own review-later queue with reminders.

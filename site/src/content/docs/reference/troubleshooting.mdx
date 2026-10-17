@@ -63,7 +63,15 @@ It's running in Warp, tmux or another terminal Hoku can't control. Go to it ther
 
 ### VS Code comes forward, but not the right terminal
 
-VS Code has no way for other apps to select a terminal tab. Hoku brings VS Code forward, and you pick the tab.
+Selecting the exact VS Code window and terminal needs the optional [Hoku extension for VS Code](/hoku/guides/vscode-extension/). Hoku's message says what happened:
+
+- **"Hoku couldn't select its window and terminal"**: the extension isn't installed, or no VS Code window is reporting. Install it from **Integrations** (under Claude Code, **VS Code extension → Set up…**), then reload VS Code's open windows.
+- **"VS Code may be asking whether to allow the Hoku extension to open a link"**: find VS Code's *Allow 'Hoku' extension to open this URI?* question, choose **Open**, tick **Do not ask me again**, and click Go to terminal again. **Finish VS Code setup** asks it in the front window.
+- **"This session's window isn't reporting to Hoku"**: reload that VS Code window, and check the extension is installed in that window's VS Code profile. Remote windows (SSH, containers, WSL) never report.
+- **"Hoku couldn't tell which window holds this session"**: two copies of VS Code are running at once. Hoku doesn't guess.
+- **"didn't confirm the session's window and terminal"** or **"didn't have its terminal any more"**: the window was busy, reloading or closed. Pick the terminal yourself, and try again later.
+
+Sessions in the Claude Code extension's panel, rather than a terminal, always get VS Code brought forward without a window or terminal picked. See [VS Code extension](/hoku/guides/vscode-extension/#when-it-cant) for every message.
 
 ### "Transcript no longer on disk"
 

@@ -41,6 +41,7 @@ export default defineConfig({
             { label: "Projects", slug: "guides/projects" },
             { label: "Sessions and the inspector", slug: "guides/sessions" },
             { label: "Getting back to a session", slug: "guides/opening-sessions" },
+            { label: "VS Code extension", slug: "guides/vscode-extension" },
             { label: "Needs You and live status", slug: "guides/needs-you" },
             { label: "Follow up", slug: "guides/follow-up" },
             { label: "Activity", slug: "guides/activity" },

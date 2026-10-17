@@ -1,7 +1,7 @@
 {
   "name": "hoku-vscode",
   "displayName": "Hoku",
-  "description": "Lets the Hoku macOS app bring the exact VS Code terminal of a Claude Code or Codex session to the front. Local only.",
+  "description": "Lets the Hoku macOS app bring the exact VS Code terminal of a Claude Code session to the front. Local only.",
   "version": "0.1.0",
   "publisher": "joao-afonso-p",
   "private": true,
