@@ -7,7 +7,8 @@
 #   ./scripts/verify-macos-release.sh <app-or-dmg> --version 0.1.0
 #   ./scripts/verify-macos-release.sh <app-or-dmg> --require-notarized [--team-id ABCDE12345]
 #
-# For Hoku.app: bundle id com.hoku.app, an intact signature over the whole bundle
+# For Hoku.app: bundle id com.hoku.app, the bundled VS Code extension
+# (Contents/Resources/vscode/hoku-vscode.vsix), an intact signature over the whole bundle
 # (`codesign --verify --deep --strict`), hardened runtime, the Apple Events entitlement,
 # and no database files inside the bundle (user data lives in
 # ~/Library/Application Support/com.hoku.app, never in the bundle).
@@ -98,7 +99,7 @@ check_notarized() {
 }
 
 check_app() {
-  local app="$1" id app_version data_files entitlements out
+  local app="$1" id app_version vsix data_files entitlements out
   [ -d "$app/Contents" ] || fail "$app is not an app bundle."
   say "Checking $app"
 
@@ -111,6 +112,13 @@ check_app() {
     fail "Bundle version is $app_version, expected $version."
   fi
   ok "$APP_NAME $app_version ($id)"
+
+  vsix="$app/Contents/Resources/vscode/hoku-vscode.vsix"
+  [ -s "$vsix" ] || fail "The bundle has no VS Code extension at Contents/Resources/vscode/hoku-vscode.vsix."
+  unzip -tq "$vsix" >/dev/null || fail "The bundled VS Code extension is not a valid archive: $vsix"
+  unzip -Z1 "$vsix" | grep -qx 'extension/out/extension.js' \
+    || fail "The bundled VS Code extension has no extension/out/extension.js."
+  ok "VS Code extension bundled (Contents/Resources/vscode/hoku-vscode.vsix)"
 
   data_files="$(find "$app" \( -iname '*.sqlite' -o -iname '*.sqlite-*' -o -iname '*.db' -o -iname '*.db-*' \) -print)"
   [ -z "$data_files" ] || fail "Database files found inside the bundle: $data_files"

@@ -48,6 +48,10 @@ jobs:
       - run: pnpm test
       - run: pnpm build
 
+      # Builds the VS Code extension and packages it with vsce (offline,
+      # --no-dependencies), proving the VSIX that ships inside Hoku.app builds.
+      - run: pnpm vscode:package
+
   rust-fmt:
     name: Rust formatting
     runs-on: ubuntu-latest
@@ -93,7 +97,7 @@ jobs:
         continue-on-error: true
         run: cargo clippy --locked --all-targets -- -D warnings
 
-      # The Tauri build runs `beforeBuildCommand` (`pnpm build`), so the
+      # The Tauri build runs `beforeBuildCommand` (`pnpm build && pnpm vscode:package`), so the
       # frontend toolchain is needed in this job too.
       # pnpm version comes from the `packageManager` field in package.json.
       - uses: pnpm/action-setup@v6

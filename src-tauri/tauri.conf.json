@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "pnpm build && pnpm vscode:package",
     "frontendDist": "../dist"
   },
   "app": {
@@ -47,6 +47,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": {
+      "resources/vscode/*": "vscode/"
+    },
     "macOS": {
       "entitlements": "./Entitlements.plist"
     }
