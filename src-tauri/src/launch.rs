@@ -3,6 +3,7 @@
 
 use crate::models::{HubError, HubResult, Provider, Session};
 use crate::providers::claude_code::read_registry;
+use crate::vscode_bridge::ProcTable;
 use regex::Regex;
 use serde::Serialize;
 use std::path::Path;
@@ -443,34 +444,30 @@ pub fn host_of_executable(comm: &str) -> Option<HostApp> {
 /// In VS Code the chain is `claude` ← shell ← `Code Helper` (the terminal's pty host) ← `Code`;
 /// started by an extension it is `claude` ← `Code Helper (Plugin)`. tmux and screen servers
 /// are re-parented to launchd, so a session inside them has no host.
+#[cfg(test)]
 pub fn host_in_process_list(ps: &str, pid: i64) -> Option<HostApp> {
-    let procs: std::collections::HashMap<i64, (i64, &str)> = ps
-        .lines()
-        .filter_map(|line| {
-            let line = line.trim_start();
-            let (pid, rest) = line.split_once(char::is_whitespace)?;
-            let (ppid, comm) = rest.trim_start().split_once(char::is_whitespace)?;
-            Some((pid.parse().ok()?, (ppid.parse().ok()?, comm.trim())))
-        })
-        .collect();
+    host_in_table(&ProcTable::parse(ps), pid)
+}
+
+pub fn host_in_table(procs: &ProcTable, pid: i64) -> Option<HostApp> {
     let mut current = pid;
     for _ in 0..12 {
-        let (ppid, comm) = procs.get(&current)?;
+        let (ppid, comm) = procs.get(current)?;
         if let Some(host) = host_of_executable(comm) {
             return Some(host);
         }
-        if *ppid <= 1 {
+        if ppid <= 1 {
             return None;
         }
-        current = *ppid;
+        current = ppid;
     }
     None
 }
 
-/// Which app hosts `pid`, from one snapshot of the process table.
-fn hosting_app(pid: i64) -> Option<HostApp> {
-    let ps = run(Command::new("/bin/ps").args(["-axo", "pid=,ppid=,comm="])).ok()?;
-    host_in_process_list(&ps, pid)
+/// Which app hosts `pid`, from one snapshot of the process table (returned with it).
+fn hosting_app(pid: i64) -> Option<(HostApp, ProcTable)> {
+    let procs = ProcTable::snapshot()?;
+    host_in_table(&procs, pid).map(|host| (host, procs))
 }
 
 /// Select the tab hosting `tty`. Returns the id of the window holding it (for iTerm and
@@ -774,7 +771,7 @@ fn open_codex(session: &Session) -> HubResult<OpenResult> {
 /// VS Code is brought forward, an iTerm or Terminal tab is selected. None when its host can't be
 /// reached (tmux, Warp, a closed tab), so the caller attaches in a new tab instead.
 fn go_to_client(pid: i64, tty: &str, shown: Shown, ctx: &LaunchContext) -> Option<OpenResult> {
-    let host = hosting_app(pid)?;
+    let (host, _procs) = hosting_app(pid)?;
     let Some(app) = host.terminal() else {
         return Some(focus_host_app(host, shown, ctx));
     };
@@ -845,7 +842,7 @@ fn open_claude_code(session: &Session, ctx: &LaunchContext) -> HubResult<OpenRes
                 format!("pid {}", live.pid),
             ));
         } else {
-            let host = hosting_app(live.pid);
+            let host = hosting_app(live.pid).map(|(h, _)| h);
             // VS Code: bring the app forward. Its terminal tabs can't be selected from outside.
             if let Some(host) = host.filter(|h| h.terminal().is_none()) {
                 return Ok(focus_host_app(host, Shown::Session, ctx));

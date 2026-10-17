@@ -13,6 +13,7 @@ mod recap;
 mod resume;
 mod runtime;
 mod scan;
+pub mod vscode_bridge;
 
 use commands::AppState;
 use std::sync::{Arc, Mutex};
