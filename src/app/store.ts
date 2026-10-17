@@ -12,7 +12,8 @@ export type Overlay =
   | { kind: "integrations" }
   | { kind: "settings" }
   | { kind: "scan" }
-  | { kind: "spaces-help"; app: string };
+  | { kind: "spaces-help"; app: string }
+  | { kind: "vscode-extension"; step?: "setup" };
 
 /**
  * Drawers over the Galaxy. Needs You is the inbox for live provider blocks; Follow up is the

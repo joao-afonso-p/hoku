@@ -97,7 +97,10 @@ pub fn run() {
                 commands::take_notification_target,
                 commands::load_demo,
                 commands::clear_demo,
-                commands::database_path
+                commands::database_path,
+                commands::vscode_extension_status,
+                commands::install_vscode_extension,
+                commands::vscode_setup_ping
                 $(, $extra)*
             ]
         };

@@ -20,6 +20,9 @@ import type {
   ResumeDraft,
   ScanReport,
   Session,
+  VsCodeFlavor,
+  VsCodeSetupResult,
+  VsCodeStatus,
 } from "./types";
 
 /** Every backend error is a HubError; normalize anything else into one. */
@@ -105,6 +108,12 @@ export const api = {
   copyText: (text: string) => call<void>("copy_text", { text }),
   spacesSwitchEnabled: () => call<boolean>("spaces_switch_enabled"),
   openSpacesSettings: () => call<void>("open_spaces_settings"),
+  /** The Hoku extension in each VS Code build installed on this Mac. */
+  vscodeExtensionStatus: () => call<VsCodeStatus[]>("vscode_extension_status"),
+  /** Install (or update) the extension bundled with Hoku, through that build's own CLI. */
+  installVscodeExtension: (flavor: VsCodeFlavor) => call<void>("install_vscode_extension", { flavor }),
+  /** Ask the running VS Code to let the extension answer, and wait up to a minute. */
+  vscodeSetupPing: (flavor: VsCodeFlavor) => call<VsCodeSetupResult>("vscode_setup_ping", { flavor }),
   revealPath: (path: string) => call<void>("reveal_path", { path }),
   openProviderApp: (app: "claude" | "codex") => call<void>("open_provider_app", { app }),
 

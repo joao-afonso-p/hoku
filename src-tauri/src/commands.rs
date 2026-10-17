@@ -10,6 +10,7 @@ use crate::recap::{self, Outcome, OutcomeInput, Recap, RecapQuery};
 use crate::resume;
 use crate::runtime::{self, MonitorState};
 use crate::scan;
+use crate::vscode_bridge;
 use rusqlite::Connection;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -438,6 +439,112 @@ fn yield_to_hosts(app: &tauri::AppHandle) {
         let _ = tx.send(());
     });
     let _ = rx.recv_timeout(std::time::Duration::from_millis(500));
+}
+
+// ───────────────────────────── VS Code extension ─────────────────────────────
+
+fn vscode_flavor(flavor: &str) -> HubResult<vscode_bridge::Flavor> {
+    vscode_bridge::Flavor::from_scheme(flavor)
+        .ok_or_else(|| HubError::new("That isn't a VS Code build Hoku knows."))
+}
+
+/// The VSIX shipped inside Hoku.app, when this build has one.
+fn bundled_vsix(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    use tauri::Manager;
+    app.path()
+        .resolve(
+            "vscode/hoku-vscode.vsix",
+            tauri::path::BaseDirectory::Resource,
+        )
+        .ok()
+        .filter(|p| p.is_file())
+}
+
+/// One entry per VS Code build installed on this Mac: whether the Hoku extension is
+/// installed, current, and reporting windows.
+#[tauri::command]
+pub async fn vscode_extension_status(
+    app: tauri::AppHandle,
+) -> HubResult<Vec<vscode_bridge::VsCodeStatus>> {
+    use vscode_bridge::*;
+    let bundled = bundled_vsix(&app).is_some();
+    blocking(move || {
+        let home = std::path::PathBuf::from(crate::association::home_dir());
+        let procs = ProcTable::snapshot().unwrap_or_default();
+        let records = read_records(&vscode_bridge_root());
+        let d = RealDesktop {
+            hoku_fullscreen: false,
+        };
+        Ok(Flavor::ALL
+            .iter()
+            .filter_map(|&flavor| {
+                let app = find_app(flavor, &home)?;
+                let installed = cli_path(&app)
+                    .and_then(|cli| run_cli(&cli, &list_args(), LIST_TIMEOUT_MS).ok())
+                    .filter(|o| o.success)
+                    .and_then(|o| parse_installed_version(&o.stdout));
+                Some(status_for(
+                    flavor, true, installed, bundled, &procs, &records, &d,
+                ))
+            })
+            .collect())
+    })
+    .await
+}
+
+/// Install (or update) the bundled extension with that build's own CLI.
+#[tauri::command]
+pub async fn install_vscode_extension(app: tauri::AppHandle, flavor: String) -> HubResult<()> {
+    use vscode_bridge::*;
+    let flavor = vscode_flavor(&flavor)?;
+    let vsix = bundled_vsix(&app).ok_or_else(|| {
+        HubError::new("This build of Hoku doesn't include the VS Code extension.")
+    })?;
+    blocking(move || {
+        let fail = format!("{} couldn't install the extension.", flavor.name());
+        let home = std::path::PathBuf::from(crate::association::home_dir());
+        let cli = find_app(flavor, &home)
+            .and_then(|a| cli_path(&a))
+            .ok_or_else(|| {
+                HubError::with_detail(
+                    fail.clone(),
+                    format!("No {} command-line tool was found.", flavor.app_name()),
+                )
+            })?;
+        let out = run_cli(&cli, &install_args(&vsix), INSTALL_TIMEOUT_MS)
+            .map_err(|e| HubError::with_detail(fail.clone(), e))?;
+        if !out.success {
+            return Err(HubError::with_detail(fail, tail(&out.stderr, 300)));
+        }
+        Ok(())
+    })
+    .await
+}
+
+/// The one-time setup step: VS Code asks the user to allow the extension to open a link, so
+/// send a ping now (in the foreground) and wait for the extension's answer.
+#[tauri::command]
+pub async fn vscode_setup_ping(
+    app: tauri::AppHandle,
+    flavor: String,
+) -> HubResult<vscode_bridge::SetupResult> {
+    use vscode_bridge::*;
+    let flavor = vscode_flavor(&flavor)?;
+    yield_to_hosts(&app);
+    blocking(move || {
+        let procs = ProcTable::snapshot().unwrap_or_default();
+        let d = RealDesktop {
+            hoku_fullscreen: false,
+        };
+        Ok(setup_ping(
+            &d,
+            &vscode_bridge_root(),
+            flavor,
+            &procs,
+            PING_WAIT_MS,
+        ))
+    })
+    .await
 }
 
 /// Bring the app a launch went to (a terminal) to the front, on the main thread.

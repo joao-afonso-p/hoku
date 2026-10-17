@@ -1014,6 +1014,220 @@ pub fn focus(
     vscode_result(flavor, shown, outcome)
 }
 
+// ───────────────────────────── setup: status, install, ping ─────────────────────────────
+
+/// How long `code --list-extensions` may take before Hoku stops it.
+pub const LIST_TIMEOUT_MS: u64 = 10_000;
+/// How long `code --install-extension` may take before Hoku stops it.
+pub const INSTALL_TIMEOUT_MS: u64 = 120_000;
+
+impl Flavor {
+    /// The app bundle's name in `/Applications`.
+    pub fn app_name(&self) -> &'static str {
+        match self {
+            Flavor::Stable => "Visual Studio Code",
+            Flavor::Insiders => "Visual Studio Code - Insiders",
+        }
+    }
+}
+
+/// One VS Code build's extension status, for the setup sheet and the Integrations row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VsCodeStatus {
+    pub flavor: &'static str,
+    pub name: &'static str,
+    pub app_installed: bool,
+    /// Running main processes. More than one means two instances.
+    pub running: usize,
+    pub installed_version: Option<String>,
+    pub bundled_version: &'static str,
+    /// This build of Hoku carries the VSIX.
+    pub bundled: bool,
+    /// Live window records, remote ones included.
+    pub connected_windows: usize,
+    pub uri_handled_before: bool,
+}
+
+/// The setup ping's answer: "ready", "no-reply", "not-running" or "two-instances".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SetupResult {
+    pub status: &'static str,
+}
+
+/// Where the app bundle may live when LaunchServices doesn't know it.
+pub fn app_fallbacks(flavor: Flavor, home: &Path) -> [PathBuf; 2] {
+    let bundle = format!("{}.app", flavor.app_name());
+    [
+        Path::new("/Applications").join(&bundle),
+        home.join("Applications").join(&bundle),
+    ]
+}
+
+/// The app bundle: LaunchServices' answer for the bundle id first, then the usual folders.
+pub fn find_app(flavor: Flavor, home: &Path) -> Option<PathBuf> {
+    app_by_bundle_id(flavor.bundle_id())
+        .into_iter()
+        .chain(app_fallbacks(flavor, home))
+        .find(|p| p.extension().is_some_and(|e| e == "app") && p.is_dir())
+}
+
+#[cfg(target_os = "macos")]
+fn app_by_bundle_id(bundle_id: &str) -> Option<PathBuf> {
+    use objc2_app_kit::NSWorkspace;
+    use objc2_foundation::NSString;
+    let url = NSWorkspace::sharedWorkspace()
+        .URLForApplicationWithBundleIdentifier(&NSString::from_str(bundle_id))?;
+    Some(PathBuf::from(url.path()?.to_string()))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn app_by_bundle_id(_: &str) -> Option<PathBuf> {
+    None
+}
+
+/// The bundled command-line launcher: `bin/code-insiders` when present, else `bin/code`.
+pub fn cli_path(app: &Path) -> Option<PathBuf> {
+    let bin = app.join("Contents/Resources/app/bin");
+    [bin.join("code-insiders"), bin.join("code")]
+        .into_iter()
+        .find(|p| p.is_file())
+}
+
+/// Arguments to list installed extensions with their versions.
+pub fn list_args() -> Vec<std::ffi::OsString> {
+    vec!["--list-extensions".into(), "--show-versions".into()]
+}
+
+/// Arguments to install (or reinstall) the bundled VSIX. Only Hoku's own resource path.
+pub fn install_args(vsix: &Path) -> Vec<std::ffi::OsString> {
+    vec![
+        "--install-extension".into(),
+        vsix.as_os_str().to_os_string(),
+        "--force".into(),
+    ]
+}
+
+/// The Hoku extension's version in `--list-extensions --show-versions` output.
+pub fn parse_installed_version(out: &str) -> Option<String> {
+    out.lines().find_map(|line| {
+        let (id, version) = line.trim().split_once('@')?;
+        let version = version.trim();
+        (id.eq_ignore_ascii_case(EXTENSION_ID)
+            && !version.is_empty()
+            && version.len() <= MAX_STR
+            && version
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+')))
+        .then(|| version.to_string())
+    })
+}
+
+/// Assemble one flavour's status from what's on disk and in the process table.
+pub fn status_for(
+    flavor: Flavor,
+    app_installed: bool,
+    installed_version: Option<String>,
+    bundled: bool,
+    procs: &ProcTable,
+    records: &[WindowRecord],
+    d: &dyn Desktop,
+) -> VsCodeStatus {
+    let live = live_records(procs, records, flavor, d);
+    VsCodeStatus {
+        flavor: flavor.scheme(),
+        name: flavor.name(),
+        app_installed,
+        running: procs.mains(flavor).len(),
+        installed_version,
+        bundled_version: BUNDLED_EXTENSION_VERSION,
+        bundled,
+        connected_windows: live.len(),
+        uri_handled_before: live.iter().any(|r| r.uri_handled_before),
+    }
+}
+
+/// The setup step: ask the one running instance of this flavour to answer a ping. The caller
+/// has already yielded the foreground, since VS Code may need to ask the user first.
+pub fn setup_ping(
+    d: &dyn Desktop,
+    bridge: &Path,
+    flavor: Flavor,
+    procs: &ProcTable,
+    wait_ms: i64,
+) -> SetupResult {
+    let status = match procs.mains(flavor).len() {
+        0 => "not-running",
+        1 => match ping(d, bridge, flavor, wait_ms) {
+            Ping::Pong => "ready",
+            Ping::NoReply | Ping::OpenFailed => "no-reply",
+        },
+        _ => "two-instances",
+    };
+    SetupResult { status }
+}
+
+/// What a finished CLI run printed.
+pub struct CliOutput {
+    pub success: bool,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+/// Run the VS Code CLI with fixed arguments (no shell), killing it after `timeout_ms`.
+pub fn run_cli(
+    cli: &Path,
+    args: &[std::ffi::OsString],
+    timeout_ms: u64,
+) -> Result<CliOutput, String> {
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+    let mut child = Command::new(cli)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let mut out = child.stdout.take().expect("piped");
+    let mut err = child.stderr.take().expect("piped");
+    let out_t = std::thread::spawn(move || {
+        let mut s = String::new();
+        let _ = out.read_to_string(&mut s);
+        s
+    });
+    let err_t = std::thread::spawn(move || {
+        let mut s = String::new();
+        let _ = err.read_to_string(&mut s);
+        s
+    });
+    let started = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if started.elapsed() >= Duration::from_millis(timeout_ms) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("stopped after {} seconds", timeout_ms / 1000));
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(100)),
+            Err(e) => return Err(e.to_string()),
+        }
+    };
+    Ok(CliOutput {
+        success: status.success(),
+        stdout: out_t.join().unwrap_or_default(),
+        stderr: err_t.join().unwrap_or_default(),
+    })
+}
+
+/// The last `max` characters of `s`, trimmed: enough of a CLI's stderr to explain a failure.
+pub fn tail(s: &str, max: usize) -> String {
+    let s = s.trim();
+    let n = s.chars().count();
+    s.chars().skip(n.saturating_sub(max)).collect()
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -2185,5 +2399,260 @@ pub(crate) mod tests {
             assert!(r.message.contains("window and terminal"), "{pid}");
             assert!(opens(&d).is_empty(), "{pid}");
         }
+    }
+
+    // ───────────── setup: status, install, ping ─────────────
+
+    #[test]
+    fn install_and_list_arguments_are_fixed() {
+        let vsix = Path::new("/Applications/Hoku.app/Contents/Resources/vscode/hoku-vscode.vsix");
+        assert_eq!(
+            install_args(vsix),
+            vec![
+                std::ffi::OsString::from("--install-extension"),
+                vsix.as_os_str().to_os_string(),
+                "--force".into(),
+            ]
+        );
+        // A path with spaces or shell characters stays one argument; no shell is involved.
+        let odd = Path::new("/tmp/a b;$(x)/hoku-vscode.vsix");
+        assert_eq!(install_args(odd)[1], odd.as_os_str());
+        assert_eq!(list_args(), vec!["--list-extensions", "--show-versions"]);
+    }
+
+    #[test]
+    fn parses_the_installed_version() {
+        let out = "ms-python.python@2024.1.0\njoao-afonso-p.hoku-vscode@0.1.0\nfoo.bar@1.0.0\n";
+        assert_eq!(parse_installed_version(out).as_deref(), Some("0.1.0"));
+        assert_eq!(
+            parse_installed_version("Joao-Afonso-P.Hoku-VSCode@0.2.0-beta.1\r\n").as_deref(),
+            Some("0.2.0-beta.1")
+        );
+        assert_eq!(parse_installed_version(""), None);
+        assert_eq!(parse_installed_version("ms-python.python@2024.1.0"), None);
+        assert_eq!(parse_installed_version("joao-afonso-p.hoku-vscode"), None);
+        assert_eq!(parse_installed_version("joao-afonso-p.hoku-vscode@"), None);
+        assert_eq!(
+            parse_installed_version("x.joao-afonso-p.hoku-vscode@1.0.0"),
+            None
+        );
+        assert_eq!(
+            parse_installed_version("joao-afonso-p.hoku-vscode@1.0; rm"),
+            None
+        );
+    }
+
+    #[test]
+    fn finds_the_cli_and_app_fallbacks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = tmp.path().join("Visual Studio Code - Insiders.app");
+        let bin = app.join("Contents/Resources/app/bin");
+        fs::create_dir_all(&bin).unwrap();
+        assert_eq!(cli_path(&app), None);
+        fs::write(bin.join("code"), "").unwrap();
+        assert_eq!(cli_path(&app), Some(bin.join("code")));
+        fs::write(bin.join("code-insiders"), "").unwrap();
+        assert_eq!(cli_path(&app), Some(bin.join("code-insiders")));
+
+        let home = Path::new("/Users/someone");
+        assert_eq!(
+            app_fallbacks(Flavor::Stable, home),
+            [
+                PathBuf::from("/Applications/Visual Studio Code.app"),
+                PathBuf::from("/Users/someone/Applications/Visual Studio Code.app"),
+            ]
+        );
+        assert_eq!(
+            app_fallbacks(Flavor::Insiders, home)[1],
+            PathBuf::from("/Users/someone/Applications/Visual Studio Code - Insiders.app")
+        );
+    }
+
+    #[test]
+    fn assembles_status_from_records_and_processes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = fake_with_hosts(tmp.path());
+        let mut remote = record(512, Some(4), &[]);
+        remote.remote = true;
+        remote.uri_handled_before = true;
+        let mut dead = record(777, Some(5), &[]);
+        dead.uri_handled_before = true;
+        let mut insiders = record(1111, Some(1), &[1120]);
+        insiders.scheme = "vscode-insiders".into();
+        let records = vec![record(511, Some(3), &[520]), remote, dead, insiders];
+
+        let s = status_for(
+            Flavor::Stable,
+            true,
+            Some("0.1.0".into()),
+            true,
+            &table(),
+            &records,
+            &d,
+        );
+        assert_eq!(
+            s,
+            VsCodeStatus {
+                flavor: "vscode",
+                name: "VS Code",
+                app_installed: true,
+                running: 1,
+                installed_version: Some("0.1.0".into()),
+                bundled_version: BUNDLED_EXTENSION_VERSION,
+                bundled: true,
+                connected_windows: 2,
+                uri_handled_before: true,
+            }
+        );
+        let json = serde_json::to_value(&s).unwrap();
+        for key in [
+            "appInstalled",
+            "installedVersion",
+            "bundledVersion",
+            "connectedWindows",
+            "uriHandledBefore",
+        ] {
+            assert!(json.get(key).is_some(), "{key}");
+        }
+
+        let i = status_for(Flavor::Insiders, true, None, false, &table(), &records, &d);
+        assert_eq!(
+            (i.flavor, i.running, i.connected_windows),
+            ("vscode-insiders", 1, 1)
+        );
+        assert!(!i.uri_handled_before && !i.bundled && i.installed_version.is_none());
+
+        let none = status_for(
+            Flavor::Stable,
+            true,
+            None,
+            true,
+            &ProcTable::parse("1 0 /sbin/launchd\n"),
+            &records,
+            &d,
+        );
+        assert_eq!((none.running, none.connected_windows), (0, 0));
+    }
+
+    fn pong_responder(reply_id: Option<&'static str>) -> Responder {
+        Box::new(move |id, req, now| {
+            assert_eq!(req["kind"], "ping");
+            serde_json::json!({
+                "schema": 1, "id": reply_id.unwrap_or(id), "kind": "ping", "windowId": 3,
+                "hostPid": 511, "status": "pong", "shownAt": null, "focusedAt": null,
+                "repliedAt": now,
+            })
+        })
+    }
+
+    fn leftovers(bridge: &Path) -> Vec<String> {
+        let mut v = files_in(&bridge.join("requests"));
+        v.extend(files_in(&bridge.join("replies")));
+        v
+    }
+
+    #[test]
+    fn setup_ping_is_ready_on_its_own_pong() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bridge = tmp.path().join("vscode-bridge");
+        let mut d = fake_with_hosts(&bridge);
+        d.reply_after = 20;
+        d.responder = Some(pong_responder(None));
+        let r = setup_ping(&d, &bridge, Flavor::Stable, &table(), PING_WAIT_MS);
+        assert_eq!(r.status, "ready");
+        let calls = opens(&d);
+        assert_eq!(calls.len(), 1);
+        assert!(calls[0].starts_with("open vscode://joao-afonso-p.hoku-vscode/ping?request="));
+        assert!(leftovers(&bridge).is_empty());
+    }
+
+    #[test]
+    fn setup_ping_ignores_a_reply_for_another_request() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bridge = tmp.path().join("vscode-bridge");
+        let other = "0123456789abcdef0123456789abcdef";
+
+        // A reply in this request's file that names another request isn't a pong.
+        let mut d = fake_with_hosts(&bridge);
+        d.responder = Some(pong_responder(Some(other)));
+        let r = setup_ping(&d, &bridge, Flavor::Stable, &table(), 2_000);
+        assert_eq!(r.status, "no-reply");
+        assert!(leftovers(&bridge).is_empty());
+
+        // An earlier request's pong left in the folder doesn't answer this one.
+        let stale = serde_json::json!({
+            "schema": 1, "id": other, "kind": "ping", "windowId": 3, "hostPid": 511,
+            "status": "pong", "shownAt": null, "focusedAt": null, "repliedAt": 1,
+        });
+        fs::write(
+            bridge.join("replies").join(format!("{other}.json")),
+            stale.to_string(),
+        )
+        .unwrap();
+        let d = fake_with_hosts(&bridge);
+        let r = setup_ping(&d, &bridge, Flavor::Stable, &table(), 2_000);
+        assert_eq!(r.status, "no-reply");
+        assert!(
+            d.now_ms() >= 1_700_000_000_000 + 2_000,
+            "waited the full time"
+        );
+        assert!(files_in(&bridge.join("requests")).is_empty());
+        assert_eq!(
+            files_in(&bridge.join("replies")),
+            vec![format!("{other}.json")]
+        );
+    }
+
+    #[test]
+    fn setup_ping_times_out_and_cleans_up() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bridge = tmp.path().join("vscode-bridge");
+        let d = fake_with_hosts(&bridge);
+        let r = setup_ping(&d, &bridge, Flavor::Stable, &table(), PING_WAIT_MS);
+        assert_eq!(r.status, "no-reply");
+        assert!(d.now_ms() >= 1_700_000_000_000 + PING_WAIT_MS);
+        assert!(leftovers(&bridge).is_empty());
+
+        let mut failing = fake_with_hosts(&bridge);
+        failing.open_error = true;
+        let r = setup_ping(&failing, &bridge, Flavor::Stable, &table(), PING_WAIT_MS);
+        assert_eq!(r.status, "no-reply");
+        assert!(leftovers(&bridge).is_empty());
+    }
+
+    #[test]
+    fn setup_ping_needs_exactly_one_instance() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bridge = tmp.path().join("vscode-bridge");
+        let mut d = fake_with_hosts(&bridge);
+        d.responder = Some(pong_responder(None));
+
+        let nothing = ProcTable::parse("1 0 /sbin/launchd\n");
+        let r = setup_ping(&d, &bridge, Flavor::Stable, &nothing, PING_WAIT_MS);
+        assert_eq!(r.status, "not-running");
+
+        let two = ProcTable::parse(&(main(500) + &main(700)));
+        let r = setup_ping(&d, &bridge, Flavor::Stable, &two, PING_WAIT_MS);
+        assert_eq!(r.status, "two-instances");
+
+        // Two stable instances say nothing about Insiders, which isn't running.
+        let r = setup_ping(&d, &bridge, Flavor::Insiders, &two, PING_WAIT_MS);
+        assert_eq!(r.status, "not-running");
+
+        assert!(
+            opens(&d).is_empty(),
+            "nothing is opened without exactly one instance"
+        );
+        assert!(leftovers(&bridge).is_empty());
+    }
+
+    #[test]
+    fn tail_keeps_the_end() {
+        assert_eq!(tail("  short  ", 300), "short");
+        let long = "a".repeat(400) + "the end";
+        let t = tail(&long, 300);
+        assert_eq!(t.chars().count(), 300);
+        assert!(t.ends_with("the end"));
+        assert_eq!(tail("ééé", 2), "éé");
     }
 }
