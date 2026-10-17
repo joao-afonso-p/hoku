@@ -24,8 +24,10 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit",
-    "install:local": "./scripts/install-local.sh"
+    "typecheck": "tsc --noEmit && tsc -p extensions/vscode --noEmit",
+    "install:local": "./scripts/install-local.sh",
+    "vscode:build": "tsc -p extensions/vscode/tsconfig.build.json",
+    "vscode:package": "node scripts/package-vscode-extension.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
@@ -38,7 +40,9 @@
     "@types/node": "^26.6.3",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
+    "@types/vscode": "~1.90.0",
     "@vitejs/plugin-react": "^6.0.2",
+    "@vscode/vsce": "^3.9.2",
     "tailwindcss": "^4.3.3",
     "typescript": "~7.0.2",
     "vite": "^8.3.1",

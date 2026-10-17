@@ -38,3 +38,7 @@ dist-ssr
 *.sqlite
 *.sqlite-*
 *.db
+
+# VS Code extension build output (packaged into src-tauri/resources/vscode/ at build time)
+extensions/vscode/out/
+*.vsix
