@@ -384,6 +384,10 @@ pub fn set_link(state: Db, from: String, to: String, linked: bool) -> HubResult<
 
 // ───────────────────────────── opening ─────────────────────────────
 
+/// The latest open. A "Go to terminal" can wait seconds for VS Code; when the user clicks again
+/// meanwhile, the older click's fallback activation must not land over the newer one.
+static OPENS: launch::OpenGeneration = launch::OpenGeneration::new();
+
 #[tauri::command]
 pub async fn open_session(
     app: tauri::AppHandle,
@@ -398,6 +402,7 @@ pub async fn open_session(
             .and_then(|w| w.is_fullscreen().ok())
             .unwrap_or(false)
     };
+    let generation = OPENS.begin();
     yield_to_hosts(&app);
     blocking(move || {
         let (session, pref) = {
@@ -420,7 +425,7 @@ pub async fn open_session(
         };
         let result = launch::open_session(&session, &ctx)?;
         db::mark_opened(&dbh.lock().expect("db"), &session.id)?;
-        bring_forward(&app, &result);
+        bring_forward(&app, &result, generation);
         Ok(result)
     })
     .await
@@ -471,10 +476,12 @@ pub async fn vscode_extension_status(
     blocking(move || {
         let home = std::path::PathBuf::from(crate::association::home_dir());
         let procs = ProcTable::snapshot().unwrap_or_default();
-        let records = read_records(&vscode_bridge_root());
         let d = RealDesktop {
             hoku_fullscreen: false,
         };
+        let bridge = vscode_bridge_root();
+        gc(&d, &bridge, &procs);
+        let records = read_records(&bridge);
         Ok(Flavor::ALL
             .iter()
             .filter_map(|&flavor| {
@@ -547,21 +554,27 @@ pub async fn vscode_setup_ping(
     .await
 }
 
-/// Bring the app a launch went to (a terminal) to the front, on the main thread.
-fn bring_forward(app: &tauri::AppHandle, result: &OpenResult) {
+/// Bring the app a launch went to (a terminal) to the front, on the main thread. Skipped when
+/// a newer open started since `generation`: that open decides what comes forward.
+fn bring_forward(app: &tauri::AppHandle, result: &OpenResult, generation: u64) {
     let Some(bundle) = result.activate.clone() else {
         return;
     };
+    if !OPENS.is_current(generation) {
+        return;
+    }
     let b = bundle.clone();
     let _ = app.run_on_main_thread(move || {
-        launch::activate_app(&b);
+        if OPENS.is_current(generation) {
+            launch::activate_app(&b);
+        }
     });
     // Verify, and retry once through LaunchServices if the terminal still isn't in front.
     let app2 = app.clone();
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(300));
         let _ = app2.run_on_main_thread(move || {
-            if !launch::is_active(&bundle) {
+            if OPENS.is_current(generation) && !launch::is_active(&bundle) {
                 launch::open_by_bundle(&bundle);
                 launch::activate_app(&bundle);
             }
@@ -587,6 +600,7 @@ pub async fn start_session(
 ) -> HubResult<OpenResult> {
     let dbh = state.db.clone();
     let claude_home = state.claude_home.clone();
+    let generation = OPENS.begin();
     yield_to_hosts(&app);
     blocking(move || {
         let (dir, pref) = {
@@ -622,7 +636,7 @@ pub async fn start_session(
         let result = launch::start_claude_code(&dir, &id, &ctx).inspect_err(|_| {
             let _ = db::take_pending_launch(&dbh.lock().expect("db"), Provider::ClaudeCode, &id);
         })?;
-        bring_forward(&app, &result);
+        bring_forward(&app, &result, generation);
         Ok(result)
     })
     .await

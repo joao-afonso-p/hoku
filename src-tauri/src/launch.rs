@@ -171,6 +171,29 @@ pub struct OpenResult {
     pub activate: Option<String>,
     /// UI follow-up: "spaces-setting" = explain the macOS desktop-switching setting.
     pub hint: Option<String>,
+    /// The open did exactly what was asked: a deep link, a new or resumed session, the
+    /// session's own terminal tab, or (VS Code) a confirmed precise focus. False for honest
+    /// partial results, which the UI shows as information rather than success.
+    pub exact: bool,
+}
+
+/// Counts "Go to terminal" (and other) opens, so a slower, older open never activates an app
+/// over a newer one: its result is only brought forward while it's still the latest.
+#[derive(Debug, Default)]
+pub struct OpenGeneration(std::sync::atomic::AtomicU64);
+
+impl OpenGeneration {
+    pub const fn new() -> OpenGeneration {
+        OpenGeneration(std::sync::atomic::AtomicU64::new(0))
+    }
+    /// Start an open; returns its generation.
+    pub fn begin(&self) -> u64 {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+    }
+    /// No open has started since `generation`.
+    pub fn is_current(&self, generation: u64) -> bool {
+        self.0.load(std::sync::atomic::Ordering::SeqCst) == generation
+    }
 }
 
 fn ok(method: &str, message: impl Into<String>) -> HubResult<OpenResult> {
@@ -179,6 +202,7 @@ fn ok(method: &str, message: impl Into<String>) -> HubResult<OpenResult> {
         message: message.into(),
         activate: None,
         hint: None,
+        exact: true,
     })
 }
 
@@ -188,6 +212,7 @@ fn ok_in(app: TerminalApp, method: &str, message: impl Into<String>) -> HubResul
         message: message.into(),
         activate: Some(app.bundle_id().into()),
         hint: None,
+        exact: true,
     })
 }
 
@@ -726,6 +751,7 @@ pub fn host_app_result(host: HostApp, shown: Shown, elsewhere: bool) -> OpenResu
         message,
         activate: Some(host.bundle_id().into()),
         hint,
+        exact: false,
     }
 }
 
@@ -815,6 +841,7 @@ fn go_to_client(pid: i64, tty: &str, shown: Shown, ctx: &LaunchContext) -> Optio
         message,
         activate: Some(app.bundle_id().into()),
         hint: None,
+        exact: true,
     })
 }
 
@@ -899,7 +926,8 @@ fn open_claude_code(session: &Session, ctx: &LaunchContext) -> HubResult<OpenRes
                             }
                         }
                         // The caller brings the app forward on the main thread (see `activate_app`).
-                        return Ok(OpenResult { method: "focus".into(), message, activate: Some(app.bundle_id().into()), hint });
+                        let exact = hint.is_none();
+                        return Ok(OpenResult { method: "focus".into(), message, activate: Some(app.bundle_id().into()), hint, exact });
                     }
                     Ok(None) => {}
                     Err(e) if e.contains("-1743") => {
@@ -1005,6 +1033,37 @@ pub fn choose_folder(_: Option<&str>, _: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_latest_open_may_bring_an_app_forward() {
+        let opens = OpenGeneration::new();
+        let first = opens.begin();
+        assert!(opens.is_current(first));
+        // A second click while the first is still waiting on VS Code.
+        let second = opens.begin();
+        assert!(
+            !opens.is_current(first),
+            "the older click's fallback must not activate"
+        );
+        assert!(opens.is_current(second));
+        // Concurrent clicks each get their own generation; only the last is current.
+        let shared = std::sync::Arc::new(OpenGeneration::new());
+        let gens: Vec<u64> = (0..8)
+            .map(|_| {
+                let s = shared.clone();
+                std::thread::spawn(move || s.begin())
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|h| h.join().unwrap())
+            .collect();
+        let mut sorted = gens.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), 8);
+        assert_eq!(gens.iter().filter(|g| shared.is_current(**g)).count(), 1);
+        assert!(shared.is_current(8));
+    }
 
     #[test]
     fn quoting_neutralizes_injection() {

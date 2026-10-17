@@ -341,17 +341,23 @@ const MAX_WINDOW_ID: u32 = 999_999_999;
 const START_SLACK_MS: i64 = 2_000;
 
 /// Read a regular file we own, at most `max` bytes. Symlinks, other owners and oversize files
-/// are refused, and the open itself won't follow a symlink swapped in after the check.
+/// are refused, the open itself won't follow a symlink swapped in after the check, and the
+/// same checks are repeated on the open handle (a file swapped in between is refused too).
 pub(crate) fn read_owned_file(path: &Path, max: u64) -> Option<Vec<u8>> {
-    let meta = fs::symlink_metadata(path).ok()?;
-    if !meta.file_type().is_file() || meta.uid() != unsafe { libc::geteuid() } || meta.len() > max {
+    let acceptable = |meta: &fs::Metadata| {
+        meta.file_type().is_file() && meta.uid() == unsafe { libc::geteuid() } && meta.len() <= max
+    };
+    if !acceptable(&fs::symlink_metadata(path).ok()?) {
         return None;
     }
     let f = fs::OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NOFOLLOW)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(path)
         .ok()?;
+    if !acceptable(&f.metadata().ok()?) {
+        return None;
+    }
     let mut buf = Vec::new();
     f.take(max + 1).read_to_end(&mut buf).ok()?;
     (buf.len() as u64 <= max).then_some(buf)
@@ -531,8 +537,9 @@ pub fn plan(
 // ───────────────────────────── requests and replies ─────────────────────────────
 
 const REPLY_MAX: u64 = 4_096;
-/// How long Hoku waits for a focus reply (the extension itself waits up to 1.5 s for focus).
-pub const FOCUS_WAIT_MS: i64 = 3_000;
+/// How long Hoku waits for a focus reply. The extension's worst case is about 2.5 s plus
+/// VS Code's own latency: up to 1 s for terminal process ids, then up to 1.5 s for focus.
+pub const FOCUS_WAIT_MS: i64 = 4_500;
 /// How long the setup ping waits (VS Code may first ask whether to allow the link).
 pub const PING_WAIT_MS: i64 = 60_000;
 const POLL_MS: u64 = 50;
@@ -765,22 +772,22 @@ pub enum Attempt {
     Timeout { handled_before: bool },
     /// The window replied, but not with a valid "shown" for this request.
     Rejected(String),
+    /// A newer click reached the same window first; that click owns the focus.
+    Superseded,
     /// The request couldn't be written or the URI couldn't be opened.
     OpenFailed,
 }
 
-/// Ask the window in `record` to show the terminal whose process is `root`, and wait (≤ 3 s)
+/// Ask the window in `record` to show the terminal whose process is `root`, and wait (≤ 4.5 s)
 /// for its reply. The request, its claimed copy and the reply are always removed.
 pub fn attempt(
     d: &dyn Desktop,
-    procs: &ProcTable,
     bridge: &Path,
     flavor: Flavor,
     record: &WindowRecord,
     root: i64,
     window_id: u32,
 ) -> Attempt {
-    gc(d, bridge, procs);
     if ensure_dirs(bridge).is_err() {
         return Attempt::OpenFailed;
     }
@@ -828,6 +835,9 @@ pub fn evaluate_focus_reply(
         || reply.host_pid != record.host_pid
     {
         return Attempt::Rejected("wrong-window".into());
+    }
+    if reply.status == "superseded" {
+        return Attempt::Superseded;
     }
     if reply.status != "shown" {
         return Attempt::Rejected(reply.status.chars().take(32).collect());
@@ -892,6 +902,7 @@ pub enum Outcome {
     Elsewhere,
     Timeout { handled_before: bool },
     Rejected(String),
+    Superseded,
     OpenFailed,
     NoExtension,
     NotReporting,
@@ -909,6 +920,7 @@ impl From<Attempt> for Outcome {
             Attempt::Elsewhere => Outcome::Elsewhere,
             Attempt::Timeout { handled_before } => Outcome::Timeout { handled_before },
             Attempt::Rejected(s) => Outcome::Rejected(s),
+            Attempt::Superseded => Outcome::Superseded,
             Attempt::OpenFailed => Outcome::OpenFailed,
         }
     }
@@ -929,8 +941,9 @@ impl From<Plan> for Outcome {
     }
 }
 
-/// The message for an outcome. Only `Precise` leaves `activate` empty: the window already came
-/// forward, and activating the app afterwards could raise a different VS Code window.
+/// The message for an outcome. Only `Precise` is `exact`. `Precise` and `Superseded` leave
+/// `activate` empty: the window already came forward (or a newer click is bringing it), and
+/// activating the app afterwards could raise a different VS Code window.
 pub fn vscode_result(flavor: Flavor, shown: Shown, outcome: Outcome) -> OpenResult {
     let name = flavor.name();
     let fallback = |message: String, hint: Option<&str>| OpenResult {
@@ -938,6 +951,7 @@ pub fn vscode_result(flavor: Flavor, shown: Shown, outcome: Outcome) -> OpenResu
         message,
         activate: Some(flavor.bundle_id().into()),
         hint: hint.map(Into::into),
+        exact: false,
     };
     match outcome {
         Outcome::Precise => OpenResult {
@@ -950,6 +964,14 @@ pub fn vscode_result(flavor: Flavor, shown: Shown, outcome: Outcome) -> OpenResu
             },
             activate: None,
             hint: None,
+            exact: true,
+        },
+        Outcome::Superseded => OpenResult {
+            method: "focus".into(),
+            message: format!("A newer Go to terminal click took over this {name} window."),
+            activate: None,
+            hint: None,
+            exact: false,
         },
         Outcome::ShownUnfocused => fallback(
             format!("Selected the session's terminal in {name}, but couldn't confirm its window came forward."),
@@ -963,12 +985,24 @@ pub fn vscode_result(flavor: Flavor, shown: Shown, outcome: Outcome) -> OpenResu
             format!("Switched to {name}, but it didn't confirm the session's window. {name} may be asking whether to allow the Hoku extension to open a link: choose Open, then click Go to terminal again."),
             Some("vscode-setup"),
         ),
-        Outcome::Timeout { handled_before: true } | Outcome::OpenFailed => fallback(
+        // VS Code may still be asking: the link was allowed once, which doesn't mean "Do not ask
+        // me again" was ticked. Keep offering the setup step.
+        Outcome::Timeout { handled_before: true } => fallback(
             format!("Switched to {name}, but it didn't confirm the session's window and terminal. Pick it there."),
+            Some("vscode-setup"),
+        ),
+        Outcome::OpenFailed => fallback(
+            format!("Switched to {name}, but Hoku couldn't send the request to select the session's window and terminal. Pick it there."),
             None,
         ),
-        Outcome::Rejected(_) => fallback(
-            format!("Switched to {name}, but the session's window didn't have its terminal any more. Pick it there."),
+        Outcome::Rejected(status) => fallback(
+            match status.as_str() {
+                "not-found" => format!("Switched to {name}, but the session's window didn't have its terminal any more. Pick it there."),
+                "expired" => format!("Switched to {name}, but the request reached the window too late. Pick the session's terminal there, or click Go to terminal again."),
+                "wrong-window" => format!("Switched to {name}, but a different window answered than the one holding the session. Pick it there."),
+                "remote" => format!("Switched to {name}. The session's window is a remote window, where Hoku can't select terminals. Pick it there."),
+                _ => format!("Switched to {name}, but the window's answer didn't match the request. Pick the session's terminal there."),
+            },
             None,
         ),
         Outcome::NoExtension => fallback(
@@ -991,6 +1025,7 @@ pub fn vscode_result(flavor: Flavor, shown: Shown, outcome: Outcome) -> OpenResu
 /// what happened. When no precise attempt is possible and VS Code's windows are on a desktop
 /// macOS won't switch to, keep the "on another desktop" answer (checked before anything runs).
 /// Generic activation (`OpenResult.activate`) only ever happens in fallbacks, after this returns.
+/// Leftover bridge files are collected first.
 pub fn focus(
     d: &dyn Desktop,
     procs: &ProcTable,
@@ -1000,6 +1035,7 @@ pub fn focus(
     claude_started_at: Option<i64>,
     shown: Shown,
 ) -> OpenResult {
+    gc(d, bridge, procs);
     let elsewhere = !d.spaces_ok(flavor.bundle_id());
     let records = read_records(bridge);
     let outcome = match plan(procs, pid, flavor, &records, d, claude_started_at) {
@@ -1007,7 +1043,7 @@ pub fn focus(
             record,
             root,
             window_id,
-        } => attempt(d, procs, bridge, flavor, &record, root, window_id).into(),
+        } => attempt(d, bridge, flavor, &record, root, window_id).into(),
         _ if elsewhere => return host_app_result(flavor.host(), shown, true),
         other => other.into(),
     };
@@ -1148,7 +1184,8 @@ pub fn status_for(
 }
 
 /// The setup step: ask the one running instance of this flavour to answer a ping. The caller
-/// has already yielded the foreground, since VS Code may need to ask the user first.
+/// has already yielded the foreground, since VS Code may need to ask the user first. Leftover
+/// bridge files are collected first.
 pub fn setup_ping(
     d: &dyn Desktop,
     bridge: &Path,
@@ -1156,6 +1193,7 @@ pub fn setup_ping(
     procs: &ProcTable,
     wait_ms: i64,
 ) -> SetupResult {
+    gc(d, bridge, procs);
     let status = match procs.mains(flavor).len() {
         0 => "not-running",
         1 => match ping(d, bridge, flavor, wait_ms) {
@@ -1174,12 +1212,15 @@ pub struct CliOutput {
     pub stderr: String,
 }
 
-/// Run the VS Code CLI with fixed arguments (no shell), killing it after `timeout_ms`.
+/// Run the VS Code CLI with fixed arguments (no shell), stopping it after `timeout_ms`. `code`
+/// is a shell script that starts VS Code's own binary, so the CLI runs in its own process
+/// group and a timeout kills the whole group, not just the script.
 pub fn run_cli(
     cli: &Path,
     args: &[std::ffi::OsString],
     timeout_ms: u64,
 ) -> Result<CliOutput, String> {
+    use std::os::unix::process::CommandExt;
     use std::process::Stdio;
     use std::time::{Duration, Instant};
     let mut child = Command::new(cli)
@@ -1187,6 +1228,7 @@ pub fn run_cli(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .process_group(0)
         .spawn()
         .map_err(|e| e.to_string())?;
     let mut out = child.stdout.take().expect("piped");
@@ -1206,6 +1248,10 @@ pub fn run_cli(
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) if started.elapsed() >= Duration::from_millis(timeout_ms) => {
+                // The group id is the child's pid (`process_group(0)`).
+                if let Ok(pgid) = i32::try_from(child.id()) {
+                    unsafe { libc::killpg(pgid, libc::SIGKILL) };
+                }
                 let _ = child.kill();
                 let _ = child.wait();
                 return Err(format!("stopped after {} seconds", timeout_ms / 1000));
@@ -1901,7 +1947,7 @@ pub(crate) mod tests {
             r
         }));
         let rec = record(511, Some(3), &[520]);
-        let got = attempt(&d, &table(), &bridge, Flavor::Stable, &rec, 520, 3);
+        let got = attempt(&d, &bridge, Flavor::Stable, &rec, 520, 3);
         (got, d, tmp)
     }
 
@@ -1934,15 +1980,15 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_late_reply_within_three_seconds_still_counts() {
+    fn a_late_reply_within_the_wait_still_counts() {
         let tmp = tempfile::tempdir().unwrap();
         let bridge = tmp.path().join("vscode-bridge");
         let rec = record(511, Some(3), &[520]);
         for (polls, want) in [
             (10, Attempt::Precise),
-            (59, Attempt::Precise),
+            (89, Attempt::Precise),
             (
-                62,
+                92,
                 Attempt::Timeout {
                     handled_before: false,
                 },
@@ -1952,7 +1998,7 @@ pub(crate) mod tests {
             d.reply_after = polls;
             d.responder = Some(Box::new(|id, _, now| shown_reply(id, now)));
             assert_eq!(
-                attempt(&d, &table(), &bridge, Flavor::Stable, &rec, 520, 3),
+                attempt(&d, &bridge, Flavor::Stable, &rec, 520, 3),
                 want,
                 "{polls}"
             );
@@ -1974,14 +2020,14 @@ pub(crate) mod tests {
         let d = fake_with_hosts(&bridge);
         let mut rec = record(511, Some(3), &[520]);
         assert_eq!(
-            attempt(&d, &table(), &bridge, Flavor::Stable, &rec, 520, 3),
+            attempt(&d, &bridge, Flavor::Stable, &rec, 520, 3),
             Attempt::Timeout {
                 handled_before: false
             }
         );
         rec.uri_handled_before = true;
         assert_eq!(
-            attempt(&d, &table(), &bridge, Flavor::Stable, &rec, 520, 3),
+            attempt(&d, &bridge, Flavor::Stable, &rec, 520, 3),
             Attempt::Timeout {
                 handled_before: true
             }
@@ -2061,6 +2107,22 @@ pub(crate) mod tests {
                 rejected("invalid"),
             ),
             (
+                "superseded",
+                Box::new(|r| {
+                    r["status"] = json!("superseded");
+                    r["focusedAt"] = json!(null);
+                }),
+                Attempt::Superseded,
+            ),
+            (
+                "superseded by another window's reply",
+                Box::new(|r| {
+                    r["status"] = json!("superseded");
+                    r["hostPid"] = json!(512);
+                }),
+                rejected("wrong-window"),
+            ),
+            (
                 "no focus",
                 Box::new(|r| r["focusedAt"] = json!(null)),
                 Attempt::ShownUnfocused,
@@ -2092,7 +2154,7 @@ pub(crate) mod tests {
         d.open_error = true;
         let rec = record(511, Some(3), &[520]);
         assert_eq!(
-            attempt(&d, &table(), &bridge, Flavor::Stable, &rec, 520, 3),
+            attempt(&d, &bridge, Flavor::Stable, &rec, 520, 3),
             Attempt::OpenFailed
         );
         assert_eq!(opens(&d).len(), 1);
@@ -2105,7 +2167,7 @@ pub(crate) mod tests {
         std::os::unix::fs::symlink(&real, &linked).unwrap();
         let d2 = fake_with_hosts(&linked);
         assert_eq!(
-            attempt(&d2, &table(), &linked, Flavor::Stable, &rec, 520, 3),
+            attempt(&d2, &linked, Flavor::Stable, &rec, 520, 3),
             Attempt::OpenFailed
         );
         assert!(opens(&d2).is_empty());
@@ -2196,6 +2258,11 @@ pub(crate) mod tests {
                 handled_before: true,
             },
             Outcome::Rejected("not-found".into()),
+            Outcome::Rejected("expired".into()),
+            Outcome::Rejected("wrong-window".into()),
+            Outcome::Rejected("remote".into()),
+            Outcome::Rejected("invalid".into()),
+            Outcome::Superseded,
             Outcome::OpenFailed,
             Outcome::NoExtension,
             Outcome::NotReporting,
@@ -2213,9 +2280,11 @@ pub(crate) mod tests {
                 for outcome in every_outcome() {
                     let r = vscode_result(flavor, shown, outcome.clone());
                     let precise = outcome == Outcome::Precise;
+                    let superseded = outcome == Outcome::Superseded;
                     assert_eq!(r.method, "focus");
-                    assert_eq!(r.activate.is_none(), precise, "{outcome:?}");
-                    if !precise {
+                    assert_eq!(r.exact, precise, "{outcome:?}");
+                    assert_eq!(r.activate.is_none(), precise || superseded, "{outcome:?}");
+                    if !precise && !superseded {
                         assert_eq!(r.activate.as_deref(), Some(flavor.bundle_id()));
                     }
                     assert_eq!(
@@ -2226,9 +2295,7 @@ pub(crate) mod tests {
                     assert!(r.message.contains(flavor.name()), "{outcome:?}");
                     let hint = match outcome {
                         Outcome::Elsewhere => Some("spaces-setting"),
-                        Outcome::Timeout {
-                            handled_before: false,
-                        } => Some("vscode-setup"),
+                        Outcome::Timeout { .. } => Some("vscode-setup"),
                         Outcome::NoExtension => Some("vscode-extension"),
                         _ => None,
                     };
@@ -2257,19 +2324,26 @@ pub(crate) mod tests {
         assert!(name(Outcome::PanelSession).contains("window and terminal"));
         assert!(name(Outcome::Ambiguous).contains("didn't pick one"));
         assert_eq!(name(Outcome::TwoInstances), name(Outcome::Ambiguous));
-        assert_eq!(
-            name(Outcome::OpenFailed),
-            name(Outcome::Timeout {
-                handled_before: true
-            })
-        );
+        assert!(name(Outcome::OpenFailed).contains("couldn't send the request"));
         assert!(name(Outcome::NotReporting).contains("isn't reporting"));
-        assert!(name(Outcome::Rejected("expired".into())).contains("didn't have its terminal"));
+        assert!(name(Outcome::Superseded).contains("newer Go to terminal click"));
+        // Each rejection says what went wrong.
+        let rejections: Vec<String> = ["not-found", "expired", "wrong-window", "remote", "invalid"]
+            .iter()
+            .map(|s| name(Outcome::Rejected((*s).into())))
+            .collect();
+        assert!(rejections[0].contains("didn't have its terminal"));
+        assert!(rejections[1].contains("too late"));
+        assert!(rejections[2].contains("different window"));
+        assert!(rejections[3].contains("remote window"));
+        assert!(rejections[4].contains("didn't match"));
+        let distinct: std::collections::HashSet<_> = rejections.iter().collect();
+        assert_eq!(distinct.len(), rejections.len());
         assert!(name(Outcome::ShownUnfocused).starts_with("Selected the session's terminal"));
     }
 
-    /// The full click: only a precise result leaves `activate` empty; every other result asks
-    /// for generic activation, which `commands::bring_forward` performs after `focus` returned.
+    /// The full click: only a precise (or superseded) result leaves `activate` empty; every
+    /// other result asks for generic activation, which `commands::bring_forward` performs after `focus` returned.
     /// The fake never sees a foreground open.
     #[test]
     fn focus_activates_only_after_a_failed_or_skipped_attempt() {
@@ -2349,6 +2423,28 @@ pub(crate) mod tests {
         let r = focus(&d, &p, &bridge, Flavor::Stable, 550, None, Shown::Dashboard);
         assert_eq!(r.activate, None);
         assert!(r.message.contains("claude agents"));
+
+        // A newer click reached the window first: not precise, and no generic activation over
+        // the newer click.
+        let mut d = fake_with_hosts(&bridge);
+        d.responder = Some(Box::new(|id, _, now| {
+            let mut r = shown_reply(id, now);
+            r["status"] = serde_json::json!("superseded");
+            r["focusedAt"] = serde_json::json!(null);
+            r
+        }));
+        let r = focus(
+            &d,
+            &p,
+            &bridge,
+            Flavor::Stable,
+            521,
+            STARTED,
+            Shown::Session,
+        );
+        assert_eq!(r.activate, None);
+        assert!(!r.exact);
+        assert!(r.message.contains("newer Go to terminal click"));
 
         // Precise plan but the window is on another desktop: the attempt says so.
         let mut d = fake_with_hosts(&bridge);
@@ -2654,5 +2750,71 @@ pub(crate) mod tests {
         assert_eq!(t.chars().count(), 300);
         assert!(t.ends_with("the end"));
         assert_eq!(tail("ééé", 2), "éé");
+    }
+
+    #[test]
+    fn focus_and_setup_collect_leftovers_first() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bridge = tmp.path().join("vscode-bridge");
+        ensure_dirs(&bridge).unwrap();
+        let leftover = bridge.join("replies").join(format!("{ID}.json"));
+        fs::write(&leftover, "{}").unwrap();
+        let d = fake_with_hosts(&bridge);
+        d.now.set(now_ms() + 120_000);
+        focus(
+            &d,
+            &table(),
+            &bridge,
+            Flavor::Stable,
+            521,
+            STARTED,
+            Shown::Session,
+        );
+        assert!(!leftover.exists());
+
+        fs::write(&leftover, "{}").unwrap();
+        let nothing = ProcTable::parse("1 0 /sbin/launchd\n");
+        assert_eq!(
+            setup_ping(&d, &bridge, Flavor::Stable, &nothing, 1_000).status,
+            "not-running"
+        );
+        assert!(!leftover.exists());
+    }
+
+    #[test]
+    fn a_cli_timeout_stops_the_whole_process_group() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pidfile = tmp.path().join("child.pid");
+        let script = tmp.path().join("code");
+        // Like VS Code's `code` wrapper: a shell script whose real work is a child process.
+        fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nsleep 30 &\necho $! > '{}'\nwait\n",
+                pidfile.display()
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+        let err = run_cli(&script, &[], 2_000).err().expect("timed out");
+        assert!(err.starts_with("stopped after"), "{err}");
+        let child: i32 = fs::read_to_string(&pidfile)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        // Give the kernel a moment to reap, then the grandchild must be gone.
+        let mut alive = true;
+        for _ in 0..50 {
+            alive = unsafe { libc::kill(child, 0) } == 0;
+            if !alive {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(!alive, "the CLI's child survived the timeout");
+
+        let ok = run_cli(Path::new("/bin/echo"), &["hi".into()], 5_000).unwrap();
+        assert!(ok.success && ok.stdout.trim() == "hi");
     }
 }
