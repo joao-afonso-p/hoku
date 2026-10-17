@@ -415,6 +415,7 @@ pub async fn open_session(
             terminal_pref: pref,
             claude_home,
             hoku_fullscreen,
+            vscode_bridge: vscode_bridge_root(),
         };
         let result = launch::open_session(&session, &ctx)?;
         db::mark_opened(&dbh.lock().expect("db"), &session.id)?;
@@ -422,6 +423,11 @@ pub async fn open_session(
         Ok(result)
     })
     .await
+}
+
+/// Where the Hoku VS Code extension and Hoku exchange window records, requests and replies.
+fn vscode_bridge_root() -> std::path::PathBuf {
+    crate::vscode_bridge::bridge_root(std::path::Path::new(&crate::association::home_dir()))
 }
 
 /// Yield the foreground now, synchronously, while Hoku is certainly still frontmost.
@@ -496,6 +502,7 @@ pub async fn start_session(
             terminal_pref: pref,
             claude_home,
             hoku_fullscreen: false,
+            vscode_bridge: vscode_bridge_root(),
         };
         let id = db::new_id();
         // Recorded first: the session can be discovered as soon as it starts.

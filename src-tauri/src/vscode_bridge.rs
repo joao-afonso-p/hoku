@@ -8,7 +8,7 @@
 //! fields are checked, and symlinks are never followed. Side effects sit behind [`Desktop`]
 //! so tests never open URLs or inspect real processes.
 
-use crate::launch::HostApp;
+use crate::launch::{host_app_result, HostApp, OpenResult, Shown};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -528,6 +528,492 @@ pub fn plan(
     }
 }
 
+// ───────────────────────────── requests and replies ─────────────────────────────
+
+const REPLY_MAX: u64 = 4_096;
+/// How long Hoku waits for a focus reply (the extension itself waits up to 1.5 s for focus).
+pub const FOCUS_WAIT_MS: i64 = 3_000;
+/// How long the setup ping waits (VS Code may first ask whether to allow the link).
+pub const PING_WAIT_MS: i64 = 60_000;
+const POLL_MS: u64 = 50;
+/// Requests and replies older than this are garbage.
+const STALE_MS: i64 = 60_000;
+/// Window records this fresh are never collected: their window may have started after the
+/// `ps` snapshot was taken.
+const RECORD_GRACE_MS: i64 = 5_000;
+
+pub fn focus_url(flavor: Flavor, window_id: u32, id: &str) -> String {
+    format!(
+        "{}://{EXTENSION_ID}/focus?windowId={window_id}&request={id}",
+        flavor.scheme()
+    )
+}
+
+pub fn ping_url(flavor: Flavor, id: &str) -> String {
+    format!("{}://{EXTENSION_ID}/ping?request={id}", flavor.scheme())
+}
+
+/// A fresh request id: 32 lowercase hex.
+pub fn new_request_id() -> String {
+    uuid::Uuid::new_v4().simple().to_string()
+}
+
+fn valid_request_id(id: &str) -> bool {
+    id.len() == 32
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// Create the bridge folders (0700) and make sure they're private, real folders we own.
+/// `com.hoku.app` itself is created if missing but never chmodded.
+pub fn ensure_dirs(bridge: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    if let Some(parent) = bridge.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    for dir in [
+        bridge.to_path_buf(),
+        bridge.join("windows"),
+        bridge.join("requests"),
+        bridge.join("replies"),
+    ] {
+        match fs::DirBuilder::new().mode(0o700).create(&dir) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(e),
+        }
+        let meta = fs::symlink_metadata(&dir)?;
+        if !meta.file_type().is_dir() || meta.uid() != unsafe { libc::geteuid() } {
+            return Err(std::io::Error::other(
+                "the bridge folder isn't a private folder",
+            ));
+        }
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
+/// Write `dir/name` atomically with mode 0600: a `wx` temp file, then rename.
+fn write_atomic(dir: &Path, name: &str, contents: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let tmp = dir.join(format!("{name}.tmp-{}", &new_request_id()[..8]));
+    let written = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(&tmp)
+        .and_then(|mut f| f.write_all(contents))
+        .and_then(|_| fs::rename(&tmp, dir.join(name)));
+    if written.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    written
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestKind {
+    Focus { pid: i64, window_id: u32 },
+    Ping,
+}
+
+impl RequestKind {
+    pub fn name(&self) -> &'static str {
+        match self {
+            RequestKind::Focus { .. } => "focus",
+            RequestKind::Ping => "ping",
+        }
+    }
+}
+
+/// `requests/<id>.json` (protocol v1).
+pub fn write_request(
+    bridge: &Path,
+    id: &str,
+    kind: RequestKind,
+    created_at: i64,
+) -> std::io::Result<()> {
+    if !valid_request_id(id) {
+        return Err(std::io::Error::other("invalid request id"));
+    }
+    let body = match kind {
+        RequestKind::Focus { pid, window_id } => serde_json::json!({
+            "schema": 1, "id": id, "kind": kind.name(), "pid": pid, "windowId": window_id, "createdAt": created_at,
+        }),
+        RequestKind::Ping => serde_json::json!({
+            "schema": 1, "id": id, "kind": kind.name(), "createdAt": created_at,
+        }),
+    };
+    write_atomic(
+        &bridge.join("requests"),
+        &format!("{id}.json"),
+        body.to_string().as_bytes(),
+    )
+}
+
+/// `replies/<id>.json`, written by the extension.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Reply {
+    pub schema: u32,
+    pub id: String,
+    pub kind: String,
+    pub window_id: Option<i64>,
+    pub host_pid: i64,
+    pub status: String,
+    pub shown_at: Option<i64>,
+    pub focused_at: Option<i64>,
+    pub replied_at: Option<i64>,
+}
+
+/// The reply to exactly this request id, if one has arrived (same file checks as records).
+pub fn read_reply(bridge: &Path, id: &str) -> Option<Reply> {
+    if !valid_request_id(id) {
+        return None;
+    }
+    let bytes = read_owned_file(
+        &bridge.join("replies").join(format!("{id}.json")),
+        REPLY_MAX,
+    )?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// Poll every 50 ms for this request's reply until `deadline` (ms since the epoch).
+pub fn wait_for_reply(d: &dyn Desktop, bridge: &Path, id: &str, deadline: i64) -> Option<Reply> {
+    loop {
+        if let Some(r) = read_reply(bridge, id) {
+            return Some(r);
+        }
+        if d.now_ms() >= deadline {
+            return None;
+        }
+        d.sleep_ms(POLL_MS);
+    }
+}
+
+/// Remove a request, its claimed copy and its reply. `remove_file` never follows symlinks.
+pub fn cleanup_request(bridge: &Path, id: &str) {
+    if !valid_request_id(id) {
+        return;
+    }
+    let _ = fs::remove_file(bridge.join("requests").join(format!("{id}.json")));
+    let _ = fs::remove_file(bridge.join("requests").join(format!("{id}.claimed")));
+    let _ = fs::remove_file(bridge.join("replies").join(format!("{id}.json")));
+}
+
+fn mtime_ms(meta: &fs::Metadata) -> i64 {
+    meta.mtime() * 1000 + meta.mtime_nsec() / 1_000_000
+}
+
+/// Remove stale requests and replies (older than 60 s) and the records of windows that are
+/// gone or whose pid now belongs to another process. Symlinks are removed, never followed.
+pub fn gc(d: &dyn Desktop, bridge: &Path, procs: &ProcTable) {
+    let now = d.now_ms();
+    for sub in ["requests", "replies"] {
+        let Ok(entries) = fs::read_dir(bridge.join(sub)) else {
+            continue;
+        };
+        for e in entries.flatten() {
+            let Ok(meta) = fs::symlink_metadata(e.path()) else {
+                continue;
+            };
+            if !meta.file_type().is_dir() && now - mtime_ms(&meta) > STALE_MS {
+                let _ = fs::remove_file(e.path());
+            }
+        }
+    }
+    let Ok(entries) = fs::read_dir(bridge.join("windows")) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let path = e.path();
+        let Ok(meta) = fs::symlink_metadata(&path) else {
+            continue;
+        };
+        let age = now - mtime_ms(&meta);
+        if meta.file_type().is_dir() || age <= RECORD_GRACE_MS {
+            continue;
+        }
+        let name = e.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let dead = match read_record(&path, name) {
+            Some(r) => !r.flavor().is_some_and(|f| is_live(procs, &r, f, d)),
+            // An interrupted write.
+            None => name.contains(".tmp-") && age > STALE_MS,
+        };
+        if dead {
+            let _ = fs::remove_file(&path);
+        }
+    }
+}
+
+// ───────────────────────────── precise attempt ─────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Attempt {
+    /// The window showed the terminal, confirmed focus, and it's on a reachable desktop.
+    Precise,
+    /// Shown, but the window didn't confirm it came forward.
+    ShownUnfocused,
+    /// Shown and focused, but on another desktop macOS won't switch to.
+    Elsewhere,
+    /// No reply in time. `handled_before`: the window has handled a Hoku link before, so it
+    /// isn't waiting on VS Code's "allow this extension to open a link" prompt.
+    Timeout { handled_before: bool },
+    /// The window replied, but not with a valid "shown" for this request.
+    Rejected(String),
+    /// The request couldn't be written or the URI couldn't be opened.
+    OpenFailed,
+}
+
+/// Ask the window in `record` to show the terminal whose process is `root`, and wait (≤ 3 s)
+/// for its reply. The request, its claimed copy and the reply are always removed.
+pub fn attempt(
+    d: &dyn Desktop,
+    procs: &ProcTable,
+    bridge: &Path,
+    flavor: Flavor,
+    record: &WindowRecord,
+    root: i64,
+    window_id: u32,
+) -> Attempt {
+    gc(d, bridge, procs);
+    if ensure_dirs(bridge).is_err() {
+        return Attempt::OpenFailed;
+    }
+    let id = new_request_id();
+    let created = d.now_ms();
+    let kind = RequestKind::Focus {
+        pid: root,
+        window_id,
+    };
+    let url = focus_url(flavor, window_id, &id);
+    if !valid_bridge_url(&url)
+        || write_request(bridge, &id, kind, created).is_err()
+        || d.open_url_background(&url).is_err()
+    {
+        cleanup_request(bridge, &id);
+        return Attempt::OpenFailed;
+    }
+    let reply = wait_for_reply(d, bridge, &id, created + FOCUS_WAIT_MS);
+    cleanup_request(bridge, &id);
+    match reply {
+        None => Attempt::Timeout {
+            handled_before: record.uri_handled_before,
+        },
+        Some(reply) => evaluate_focus_reply(d, flavor, record, window_id, &id, created, &reply),
+    }
+}
+
+/// Precise success needs this request's own "shown" reply from the targeted window, with
+/// `createdAt ≤ shownAt ≤ focusedAt`, and a desktop the user can see.
+pub fn evaluate_focus_reply(
+    d: &dyn Desktop,
+    flavor: Flavor,
+    record: &WindowRecord,
+    window_id: u32,
+    id: &str,
+    created: i64,
+    reply: &Reply,
+) -> Attempt {
+    if reply.schema != 1 {
+        return Attempt::Rejected("invalid".into());
+    }
+    if reply.id != id
+        || reply.kind != "focus"
+        || reply.window_id != Some(window_id as i64)
+        || reply.host_pid != record.host_pid
+    {
+        return Attempt::Rejected("wrong-window".into());
+    }
+    if reply.status != "shown" {
+        return Attempt::Rejected(reply.status.chars().take(32).collect());
+    }
+    let shown = match reply.shown_at {
+        Some(s) if s >= created => s,
+        _ => return Attempt::Rejected("invalid".into()),
+    };
+    if !reply.focused_at.is_some_and(|f| f >= shown) {
+        return Attempt::ShownUnfocused;
+    }
+    if d.spaces_ok(flavor.bundle_id()) {
+        Attempt::Precise
+    } else {
+        Attempt::Elsewhere
+    }
+}
+
+/// The setup step's answer from a window of this flavour.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ping {
+    Pong,
+    NoReply,
+    OpenFailed,
+}
+
+/// Send a ping (`open`, not `open -g`: the user is setting up and may need to answer VS Code's
+/// prompt) and wait up to `wait_ms` for this request's `pong`. Cleans up either way. The
+/// caller checks first that exactly one instance of this flavour is running.
+pub fn ping(d: &dyn Desktop, bridge: &Path, flavor: Flavor, wait_ms: i64) -> Ping {
+    if ensure_dirs(bridge).is_err() {
+        return Ping::OpenFailed;
+    }
+    let id = new_request_id();
+    let created = d.now_ms();
+    let url = ping_url(flavor, &id);
+    if !valid_bridge_url(&url)
+        || write_request(bridge, &id, RequestKind::Ping, created).is_err()
+        || d.open_url(&url).is_err()
+    {
+        cleanup_request(bridge, &id);
+        return Ping::OpenFailed;
+    }
+    let reply = wait_for_reply(d, bridge, &id, created + wait_ms);
+    cleanup_request(bridge, &id);
+    match reply {
+        Some(r) if r.schema == 1 && r.id == id && r.kind == "ping" && r.status == "pong" => {
+            Ping::Pong
+        }
+        _ => Ping::NoReply,
+    }
+}
+
+// ───────────────────────────── outcome → message ─────────────────────────────
+
+/// Everything "Go to terminal" in VS Code can end with: a plan that ruled out a precise
+/// attempt, or the attempt's result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Outcome {
+    Precise,
+    ShownUnfocused,
+    Elsewhere,
+    Timeout { handled_before: bool },
+    Rejected(String),
+    OpenFailed,
+    NoExtension,
+    NotReporting,
+    Ambiguous,
+    TwoInstances,
+    PanelSession,
+    Unverified,
+}
+
+impl From<Attempt> for Outcome {
+    fn from(a: Attempt) -> Outcome {
+        match a {
+            Attempt::Precise => Outcome::Precise,
+            Attempt::ShownUnfocused => Outcome::ShownUnfocused,
+            Attempt::Elsewhere => Outcome::Elsewhere,
+            Attempt::Timeout { handled_before } => Outcome::Timeout { handled_before },
+            Attempt::Rejected(s) => Outcome::Rejected(s),
+            Attempt::OpenFailed => Outcome::OpenFailed,
+        }
+    }
+}
+
+impl From<Plan> for Outcome {
+    fn from(p: Plan) -> Outcome {
+        match p {
+            // A precise plan always becomes an attempt; never claim success from a plan.
+            Plan::Precise { .. } => Outcome::Unverified,
+            Plan::NoExtension => Outcome::NoExtension,
+            Plan::NotReporting => Outcome::NotReporting,
+            Plan::Ambiguous => Outcome::Ambiguous,
+            Plan::TwoInstances => Outcome::TwoInstances,
+            Plan::PanelSession => Outcome::PanelSession,
+            Plan::Unverified => Outcome::Unverified,
+        }
+    }
+}
+
+/// The message for an outcome. Only `Precise` leaves `activate` empty: the window already came
+/// forward, and activating the app afterwards could raise a different VS Code window.
+pub fn vscode_result(flavor: Flavor, shown: Shown, outcome: Outcome) -> OpenResult {
+    let name = flavor.name();
+    let fallback = |message: String, hint: Option<&str>| OpenResult {
+        method: "focus".into(),
+        message,
+        activate: Some(flavor.bundle_id().into()),
+        hint: hint.map(Into::into),
+    };
+    match outcome {
+        Outcome::Precise => OpenResult {
+            method: "focus".into(),
+            message: match shown {
+                Shown::Session => format!("Switched to this session's terminal in {name}"),
+                Shown::Dashboard => {
+                    format!("Switched to `claude agents` in {name}. Pick this session there.")
+                }
+            },
+            activate: None,
+            hint: None,
+        },
+        Outcome::ShownUnfocused => fallback(
+            format!("Selected the session's terminal in {name}, but couldn't confirm its window came forward."),
+            None,
+        ),
+        Outcome::Elsewhere => fallback(
+            format!("The session is in {name} on another desktop"),
+            Some("spaces-setting"),
+        ),
+        Outcome::Timeout { handled_before: false } => fallback(
+            format!("Switched to {name}, but it didn't confirm the session's window. {name} may be asking whether to allow the Hoku extension to open a link: choose Open, then click Go to terminal again."),
+            Some("vscode-setup"),
+        ),
+        Outcome::Timeout { handled_before: true } | Outcome::OpenFailed => fallback(
+            format!("Switched to {name}, but it didn't confirm the session's window and terminal. Pick it there."),
+            None,
+        ),
+        Outcome::Rejected(_) => fallback(
+            format!("Switched to {name}, but the session's window didn't have its terminal any more. Pick it there."),
+            None,
+        ),
+        Outcome::NoExtension => fallback(
+            format!("Switched to {name}, where this session is running. Hoku couldn't select its window and terminal."),
+            Some("vscode-extension"),
+        ),
+        Outcome::NotReporting => fallback(
+            format!("Switched to {name}. This session's window isn't reporting to Hoku (reload it, or check the Hoku extension is installed in that VS Code profile)."),
+            None,
+        ),
+        Outcome::Ambiguous | Outcome::TwoInstances => fallback(
+            format!("Switched to {name}. Hoku couldn't tell which window holds this session, so it didn't pick one."),
+            None,
+        ),
+        Outcome::PanelSession | Outcome::Unverified => host_app_result(flavor.host(), shown, false),
+    }
+}
+
+/// "Go to terminal" for a process hosted by VS Code: plan, attempt when it's safe, and say
+/// what happened. When no precise attempt is possible and VS Code's windows are on a desktop
+/// macOS won't switch to, keep the "on another desktop" answer (checked before anything runs).
+/// Generic activation (`OpenResult.activate`) only ever happens in fallbacks, after this returns.
+pub fn focus(
+    d: &dyn Desktop,
+    procs: &ProcTable,
+    bridge: &Path,
+    flavor: Flavor,
+    pid: i64,
+    claude_started_at: Option<i64>,
+    shown: Shown,
+) -> OpenResult {
+    let elsewhere = !d.spaces_ok(flavor.bundle_id());
+    let records = read_records(bridge);
+    let outcome = match plan(procs, pid, flavor, &records, d, claude_started_at) {
+        Plan::Precise {
+            record,
+            root,
+            window_id,
+        } => attempt(d, procs, bridge, flavor, &record, root, window_id).into(),
+        _ if elsewhere => return host_app_result(flavor.host(), shown, true),
+        other => other.into(),
+    };
+    vscode_result(flavor, shown, outcome)
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -574,8 +1060,11 @@ pub(crate) mod tests {
         ProcTable::parse(&ps)
     }
 
-    /// A recording fake. The clock only moves when the code sleeps. On `open_url_background`
-    /// it can play the extension: claim the request and drop a reply after `reply_after` polls.
+    /// Plays the extension: builds a reply from (request id, request JSON, time of the open).
+    pub type Responder = Box<dyn Fn(&str, &serde_json::Value, i64) -> serde_json::Value>;
+
+    /// A recording fake. The clock only moves when the code sleeps. On an open it can play
+    /// the extension: claim the request and drop a reply after `reply_after` polls.
     pub struct Fake {
         pub now: Cell<i64>,
         pub starts: HashMap<i64, i64>,
@@ -584,8 +1073,7 @@ pub(crate) mod tests {
         pub calls: RefCell<Vec<String>>,
         pub bridge: PathBuf,
         /// Builds the reply from (request id, request JSON, time of the open).
-        #[allow(clippy::type_complexity)]
-        pub responder: Option<Box<dyn Fn(&str, &serde_json::Value, i64) -> serde_json::Value>>,
+        pub responder: Option<Responder>,
         pub reply_after: u32,
         pub pending: RefCell<Option<(u32, String, serde_json::Value)>>,
         /// (request file mode, requests folder mode, request JSON) seen at open time.
@@ -634,6 +1122,20 @@ pub(crate) mod tests {
         }
         fn open_url_background(&self, url: &str) -> Result<(), String> {
             self.calls.borrow_mut().push(format!("open -g {url}"));
+            self.respond(url)
+        }
+        fn open_url(&self, url: &str) -> Result<(), String> {
+            self.calls.borrow_mut().push(format!("open {url}"));
+            self.respond(url)
+        }
+        fn spaces_ok(&self, bundle_id: &str) -> bool {
+            self.calls.borrow_mut().push(format!("spaces {bundle_id}"));
+            self.spaces
+        }
+    }
+
+    impl Fake {
+        fn respond(&self, url: &str) -> Result<(), String> {
             if self.open_error {
                 return Err("boom".into());
             }
@@ -659,14 +1161,6 @@ pub(crate) mod tests {
                 }
             }
             Ok(())
-        }
-        fn open_url(&self, url: &str) -> Result<(), String> {
-            self.calls.borrow_mut().push(format!("open {url}"));
-            Ok(())
-        }
-        fn spaces_ok(&self, bundle_id: &str) -> bool {
-            self.calls.borrow_mut().push(format!("spaces {bundle_id}"));
-            self.spaces
         }
     }
 
@@ -1101,5 +1595,595 @@ pub(crate) mod tests {
             plan(&split, 521, Flavor::Stable, &[a], &d, STARTED),
             Plan::NotReporting
         );
+    }
+
+    // ───────────── commit 4: attempt, gc, ping, results, focus ─────────────
+
+    const ID: &str = "0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn bridge_urls_are_strict() {
+        let f = focus_url(Flavor::Stable, 3, ID);
+        assert_eq!(
+            f,
+            format!("vscode://joao-afonso-p.hoku-vscode/focus?windowId=3&request={ID}")
+        );
+        assert!(valid_bridge_url(&f));
+        assert!(valid_bridge_url(&focus_url(
+            Flavor::Insiders,
+            999_999_999,
+            ID
+        )));
+        assert!(valid_bridge_url(&ping_url(Flavor::Insiders, ID)));
+        assert!(valid_bridge_url(&focus_url(
+            Flavor::Stable,
+            1,
+            &new_request_id()
+        )));
+        let bad = [
+            format!("{f}&x=1"),
+            format!("{f}#frag"),
+            format!("{f}\n"),
+            format!("{f}\nvscode://joao-afonso-p.hoku-vscode/ping?request={ID}"),
+            f.replace("joao-afonso-p.hoku-vscode", "evil.ext"),
+            f.replace("vscode://", "cursor://"),
+            f.replace("vscode://", "https://"),
+            format!("{f}0"),
+            f.replace(ID, &ID.to_uppercase()),
+            f.replace(ID, "0123"),
+            f.replace("windowId=3", "windowId=1234567890"),
+            f.replace("windowId=3", "windowId=-3"),
+            f.replace("windowId=3&", "windowId=3&windowId=4&"),
+            format!("vscode://joao-afonso-p.hoku-vscode/ping?request={ID}&windowId=3"),
+            format!("vscode://joao-afonso-p.hoku-vscode/other?request={ID}"),
+        ];
+        for url in bad {
+            assert!(!valid_bridge_url(&url), "{url:?}");
+        }
+    }
+
+    fn shown_reply(id: &str, created: i64) -> serde_json::Value {
+        serde_json::json!({
+            "schema": 1, "id": id, "kind": "focus", "windowId": 3, "hostPid": 511,
+            "status": "shown", "shownAt": created + 100, "focusedAt": created + 300,
+            "repliedAt": created + 310,
+        })
+    }
+
+    fn files_in(dir: &Path) -> Vec<String> {
+        let mut v: Vec<String> = fs::read_dir(dir)
+            .map(|es| {
+                es.flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        v.sort();
+        v
+    }
+
+    fn opens(d: &Fake) -> Vec<String> {
+        d.calls
+            .borrow()
+            .iter()
+            .filter(|c| c.starts_with("open"))
+            .cloned()
+            .collect()
+    }
+
+    /// Run one attempt against window 511 (window id 3) with a fake extension whose reply is
+    /// `shown_reply` changed by `edit`.
+    fn attempt_with(
+        edit: impl Fn(&mut serde_json::Value) + 'static,
+        spaces: bool,
+    ) -> (Attempt, Fake, tempfile::TempDir) {
+        let tmp = tempfile::tempdir().unwrap();
+        let bridge = tmp.path().join("vscode-bridge");
+        let mut d = fake_with_hosts(&bridge);
+        d.spaces = spaces;
+        d.responder = Some(Box::new(move |id, _, now| {
+            let mut r = shown_reply(id, now);
+            edit(&mut r);
+            r
+        }));
+        let rec = record(511, Some(3), &[520]);
+        let got = attempt(&d, &table(), &bridge, Flavor::Stable, &rec, 520, 3);
+        (got, d, tmp)
+    }
+
+    #[test]
+    fn a_confirmed_reply_is_precise_and_leaves_nothing_behind() {
+        let (got, d, tmp) = attempt_with(|_| {}, true);
+        assert_eq!(got, Attempt::Precise);
+        let calls = opens(&d);
+        assert_eq!(calls.len(), 1, "{calls:?}");
+        let url = calls[0]
+            .strip_prefix("open -g ")
+            .expect("background open only");
+        assert!(valid_bridge_url(url) && url.contains("/focus?windowId=3&request="));
+        let (mode, dir_mode, req) = d.seen_request.borrow().clone().unwrap();
+        assert_eq!(mode, 0o600);
+        assert_eq!(dir_mode, 0o700);
+        assert_eq!(req["schema"], 1);
+        assert_eq!(req["kind"], "focus");
+        assert_eq!(req["pid"], 520);
+        assert_eq!(req["windowId"], 3);
+        assert_eq!(req["createdAt"], 1_700_000_000_000i64);
+        assert!(url.ends_with(req["id"].as_str().unwrap()));
+        let bridge = tmp.path().join("vscode-bridge");
+        for sub in ["", "windows", "requests", "replies"] {
+            let m = fs::metadata(bridge.join(sub)).unwrap().permissions().mode() & 0o777;
+            assert_eq!(m, 0o700, "{sub}");
+        }
+        assert!(files_in(&bridge.join("requests")).is_empty());
+        assert!(files_in(&bridge.join("replies")).is_empty());
+    }
+
+    #[test]
+    fn a_late_reply_within_three_seconds_still_counts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bridge = tmp.path().join("vscode-bridge");
+        let rec = record(511, Some(3), &[520]);
+        for (polls, want) in [
+            (10, Attempt::Precise),
+            (59, Attempt::Precise),
+            (
+                62,
+                Attempt::Timeout {
+                    handled_before: false,
+                },
+            ),
+        ] {
+            let mut d = fake_with_hosts(&bridge);
+            d.reply_after = polls;
+            d.responder = Some(Box::new(|id, _, now| shown_reply(id, now)));
+            assert_eq!(
+                attempt(&d, &table(), &bridge, Flavor::Stable, &rec, 520, 3),
+                want,
+                "{polls}"
+            );
+            assert!(d.now_ms() <= 1_700_000_000_000 + FOCUS_WAIT_MS + 50);
+        }
+        // A reply that turns up after Hoku stopped waiting is cleaned up by the next gc.
+    }
+
+    #[test]
+    fn an_earlier_clicks_reply_is_ignored() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bridge = tmp.path().join("vscode-bridge");
+        ensure_dirs(&bridge).unwrap();
+        fs::write(
+            bridge.join("replies").join(format!("{ID}.json")),
+            shown_reply(ID, 1_700_000_000_000).to_string(),
+        )
+        .unwrap();
+        let d = fake_with_hosts(&bridge);
+        let mut rec = record(511, Some(3), &[520]);
+        assert_eq!(
+            attempt(&d, &table(), &bridge, Flavor::Stable, &rec, 520, 3),
+            Attempt::Timeout {
+                handled_before: false
+            }
+        );
+        rec.uri_handled_before = true;
+        assert_eq!(
+            attempt(&d, &table(), &bridge, Flavor::Stable, &rec, 520, 3),
+            Attempt::Timeout {
+                handled_before: true
+            }
+        );
+        assert!(files_in(&bridge.join("requests")).is_empty());
+    }
+
+    #[test]
+    fn replies_are_bound_to_the_request_and_window() {
+        use serde_json::json;
+        type Edit = Box<dyn Fn(&mut serde_json::Value)>;
+        let rejected = |s: &str| Attempt::Rejected(s.into());
+        let cases: Vec<(&str, Edit, Attempt)> = vec![
+            (
+                "other id",
+                Box::new(|r| r["id"] = json!(ID)),
+                rejected("wrong-window"),
+            ),
+            (
+                "ping kind",
+                Box::new(|r| r["kind"] = json!("ping")),
+                rejected("wrong-window"),
+            ),
+            (
+                "other window",
+                Box::new(|r| r["windowId"] = json!(4)),
+                rejected("wrong-window"),
+            ),
+            (
+                "no window",
+                Box::new(|r| r["windowId"] = json!(null)),
+                rejected("wrong-window"),
+            ),
+            (
+                "other host",
+                Box::new(|r| r["hostPid"] = json!(512)),
+                rejected("wrong-window"),
+            ),
+            (
+                "schema",
+                Box::new(|r| r["schema"] = json!(2)),
+                rejected("invalid"),
+            ),
+            (
+                "not-found",
+                Box::new(|r| r["status"] = json!("not-found")),
+                rejected("not-found"),
+            ),
+            (
+                "expired",
+                Box::new(|r| r["status"] = json!("expired")),
+                rejected("expired"),
+            ),
+            (
+                "remote",
+                Box::new(|r| r["status"] = json!("remote")),
+                rejected("remote"),
+            ),
+            (
+                "wrong-window",
+                Box::new(|r| r["status"] = json!("wrong-window")),
+                rejected("wrong-window"),
+            ),
+            (
+                "pong",
+                Box::new(|r| r["status"] = json!("pong")),
+                rejected("pong"),
+            ),
+            (
+                "not shown",
+                Box::new(|r| r["shownAt"] = json!(null)),
+                rejected("invalid"),
+            ),
+            (
+                "shown before the request",
+                Box::new(|r| r["shownAt"] = json!(1_700_000_000_000i64 - 1)),
+                rejected("invalid"),
+            ),
+            (
+                "no focus",
+                Box::new(|r| r["focusedAt"] = json!(null)),
+                Attempt::ShownUnfocused,
+            ),
+            (
+                "focus before show",
+                Box::new(|r| r["focusedAt"] = json!(1_700_000_000_000i64 + 50)),
+                Attempt::ShownUnfocused,
+            ),
+        ];
+        for (what, edit, want) in cases {
+            let (got, d, _tmp) = attempt_with(edit, true);
+            assert_eq!(got, want, "{what}");
+            // Only a confirmed, focused reply asks about desktops.
+            assert!(
+                !d.calls.borrow().iter().any(|c| c.starts_with("spaces")),
+                "{what}"
+            );
+        }
+        // Shown and focused, but on a desktop macOS won't switch to.
+        assert_eq!(attempt_with(|_| {}, false).0, Attempt::Elsewhere);
+    }
+
+    #[test]
+    fn a_failed_open_cleans_up() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bridge = tmp.path().join("vscode-bridge");
+        let mut d = fake_with_hosts(&bridge);
+        d.open_error = true;
+        let rec = record(511, Some(3), &[520]);
+        assert_eq!(
+            attempt(&d, &table(), &bridge, Flavor::Stable, &rec, 520, 3),
+            Attempt::OpenFailed
+        );
+        assert_eq!(opens(&d).len(), 1);
+        assert!(files_in(&bridge.join("requests")).is_empty());
+        // A bridge folder that's a symlink is refused before anything is written or opened.
+        let tmp2 = tempfile::tempdir().unwrap();
+        let real = tmp2.path().join("real");
+        fs::create_dir(&real).unwrap();
+        let linked = tmp2.path().join("vscode-bridge");
+        std::os::unix::fs::symlink(&real, &linked).unwrap();
+        let d2 = fake_with_hosts(&linked);
+        assert_eq!(
+            attempt(&d2, &table(), &linked, Flavor::Stable, &rec, 520, 3),
+            Attempt::OpenFailed
+        );
+        assert!(opens(&d2).is_empty());
+        assert!(files_in(&real).is_empty());
+    }
+
+    #[test]
+    fn gc_removes_stale_requests_and_dead_windows() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bridge = tmp.path().join("vscode-bridge");
+        ensure_dirs(&bridge).unwrap();
+        for f in [
+            "requests/a.json",
+            "requests/b.claimed",
+            "replies/c.json",
+            "requests/x.json.tmp-1",
+        ] {
+            fs::write(bridge.join(f), "{}").unwrap();
+        }
+        write_record(&bridge, "511.json", &json(&record(511, Some(3), &[520])));
+        write_record(&bridge, "4242.json", &json(&record(4242, Some(3), &[520])));
+        let mut reused = record(512, Some(4), &[]);
+        reused.host_started_at = 1;
+        write_record(&bridge, "512.json", &json(&reused));
+        write_record(&bridge, "abc.json", "{}");
+        let outside = tmp.path().join("outside.json");
+        fs::write(&outside, json(&record(4343, Some(1), &[1]))).unwrap();
+        std::os::unix::fs::symlink(&outside, bridge.join("windows/4343.json")).unwrap();
+
+        // Just written: within the grace period, so dead windows stay; requests aren't stale.
+        let d = fake_with_hosts(&bridge);
+        d.now.set(now_ms() + 2_000);
+        gc(&d, &bridge, &table());
+        assert_eq!(files_in(&bridge.join("requests")).len(), 3);
+        assert_eq!(files_in(&bridge.join("windows")).len(), 5);
+
+        d.now.set(now_ms() + 120_000);
+        gc(&d, &bridge, &table());
+        assert!(files_in(&bridge.join("requests")).is_empty());
+        assert!(files_in(&bridge.join("replies")).is_empty());
+        assert_eq!(
+            files_in(&bridge.join("windows")),
+            vec!["4343.json", "511.json", "abc.json"]
+        );
+        assert!(outside.exists(), "symlinks are never followed");
+    }
+
+    #[test]
+    fn ping_waits_for_its_own_pong() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bridge = tmp.path().join("vscode-bridge");
+        let mut d = fake_with_hosts(&bridge);
+        d.reply_after = 100;
+        d.responder = Some(Box::new(|id, req, now| {
+            assert_eq!(req["kind"], "ping");
+            assert!(req.get("windowId").is_none() && req.get("pid").is_none());
+            serde_json::json!({
+                "schema": 1, "id": id, "kind": "ping", "windowId": 3, "hostPid": 511,
+                "status": "pong", "shownAt": null, "focusedAt": null, "repliedAt": now,
+            })
+        }));
+        assert_eq!(
+            ping(&d, &bridge, Flavor::Insiders, PING_WAIT_MS),
+            Ping::Pong
+        );
+        let calls = opens(&d);
+        assert_eq!(calls.len(), 1);
+        assert!(
+            calls[0].starts_with("open vscode-insiders://joao-afonso-p.hoku-vscode/ping?request=")
+        );
+        assert!(files_in(&bridge.join("requests")).is_empty());
+        assert!(files_in(&bridge.join("replies")).is_empty());
+
+        let silent = fake_with_hosts(&bridge);
+        assert_eq!(ping(&silent, &bridge, Flavor::Stable, 1_000), Ping::NoReply);
+        assert!(files_in(&bridge.join("requests")).is_empty());
+    }
+
+    fn every_outcome() -> Vec<Outcome> {
+        vec![
+            Outcome::Precise,
+            Outcome::ShownUnfocused,
+            Outcome::Elsewhere,
+            Outcome::Timeout {
+                handled_before: false,
+            },
+            Outcome::Timeout {
+                handled_before: true,
+            },
+            Outcome::Rejected("not-found".into()),
+            Outcome::OpenFailed,
+            Outcome::NoExtension,
+            Outcome::NotReporting,
+            Outcome::Ambiguous,
+            Outcome::TwoInstances,
+            Outcome::PanelSession,
+            Outcome::Unverified,
+        ]
+    }
+
+    #[test]
+    fn every_outcome_has_its_message() {
+        for flavor in Flavor::ALL {
+            for shown in [Shown::Session, Shown::Dashboard] {
+                for outcome in every_outcome() {
+                    let r = vscode_result(flavor, shown, outcome.clone());
+                    let precise = outcome == Outcome::Precise;
+                    assert_eq!(r.method, "focus");
+                    assert_eq!(r.activate.is_none(), precise, "{outcome:?}");
+                    if !precise {
+                        assert_eq!(r.activate.as_deref(), Some(flavor.bundle_id()));
+                    }
+                    assert_eq!(
+                        r.message.contains("Switched to this session's terminal"),
+                        precise && shown == Shown::Session,
+                        "{outcome:?}"
+                    );
+                    assert!(r.message.contains(flavor.name()), "{outcome:?}");
+                    let hint = match outcome {
+                        Outcome::Elsewhere => Some("spaces-setting"),
+                        Outcome::Timeout {
+                            handled_before: false,
+                        } => Some("vscode-setup"),
+                        Outcome::NoExtension => Some("vscode-extension"),
+                        _ => None,
+                    };
+                    assert_eq!(r.hint.as_deref(), hint, "{outcome:?}");
+                    assert!(!r.message.contains("terminal tab"), "{outcome:?}");
+                }
+            }
+        }
+        let name = |o| vscode_result(Flavor::Stable, Shown::Session, o).message;
+        assert_eq!(
+            name(Outcome::Precise),
+            "Switched to this session's terminal in VS Code"
+        );
+        assert_eq!(
+            vscode_result(Flavor::Insiders, Shown::Dashboard, Outcome::Precise).message,
+            "Switched to `claude agents` in VS Code Insiders. Pick this session there."
+        );
+        assert!(name(Outcome::Timeout {
+            handled_before: false
+        })
+        .contains("choose Open"));
+        assert!(!name(Outcome::Timeout {
+            handled_before: true
+        })
+        .contains("choose Open"));
+        assert!(name(Outcome::PanelSession).contains("window and terminal"));
+        assert!(name(Outcome::Ambiguous).contains("didn't pick one"));
+        assert_eq!(name(Outcome::TwoInstances), name(Outcome::Ambiguous));
+        assert_eq!(
+            name(Outcome::OpenFailed),
+            name(Outcome::Timeout {
+                handled_before: true
+            })
+        );
+        assert!(name(Outcome::NotReporting).contains("isn't reporting"));
+        assert!(name(Outcome::Rejected("expired".into())).contains("didn't have its terminal"));
+        assert!(name(Outcome::ShownUnfocused).starts_with("Selected the session's terminal"));
+    }
+
+    /// The full click: only a precise result leaves `activate` empty; every other result asks
+    /// for generic activation, which `commands::bring_forward` performs after `focus` returned.
+    /// The fake never sees a foreground open.
+    #[test]
+    fn focus_activates_only_after_a_failed_or_skipped_attempt() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bridge = tmp.path().join("vscode-bridge");
+        let p = table();
+        let responder = || -> Responder { Box::new(|id, _, now| shown_reply(id, now)) };
+
+        // No extension yet.
+        let d = fake_with_hosts(&bridge);
+        let r = focus(
+            &d,
+            &p,
+            &bridge,
+            Flavor::Stable,
+            521,
+            STARTED,
+            Shown::Session,
+        );
+        assert_eq!(r.hint.as_deref(), Some("vscode-extension"));
+        assert_eq!(r.activate.as_deref(), Some("com.microsoft.VSCode"));
+        assert!(opens(&d).is_empty());
+
+        // ...and VS Code's windows are on another desktop: today's answer.
+        let mut d = fake_with_hosts(&bridge);
+        d.spaces = false;
+        let r = focus(
+            &d,
+            &p,
+            &bridge,
+            Flavor::Stable,
+            521,
+            STARTED,
+            Shown::Session,
+        );
+        assert_eq!(r.message, "The session is in VS Code on another desktop");
+        assert_eq!(r.hint.as_deref(), Some("spaces-setting"));
+        assert!(r.activate.is_some() && opens(&d).is_empty());
+
+        write_record(
+            &bridge,
+            "511.json",
+            &json(&record(511, Some(3), &[520, 530])),
+        );
+        write_record(&bridge, "512.json", &json(&record(512, Some(4), &[550])));
+
+        // Precise: one background open, no activation.
+        let mut d = fake_with_hosts(&bridge);
+        d.responder = Some(responder());
+        let r = focus(
+            &d,
+            &p,
+            &bridge,
+            Flavor::Stable,
+            521,
+            STARTED,
+            Shown::Session,
+        );
+        assert_eq!(r.activate, None);
+        assert_eq!(r.message, "Switched to this session's terminal in VS Code");
+        let calls = opens(&d);
+        assert_eq!(calls.len(), 1);
+        assert!(
+            calls[0].starts_with("open -g vscode://joao-afonso-p.hoku-vscode/focus?windowId=3&")
+        );
+        let (_, _, req) = d.seen_request.borrow().clone().unwrap();
+        assert_eq!(req["pid"], 520);
+
+        // A `claude agents` client in the other window.
+        let mut d = fake_with_hosts(&bridge);
+        d.responder = Some(Box::new(|id, _, now| {
+            let mut r = shown_reply(id, now);
+            r["windowId"] = serde_json::json!(4);
+            r["hostPid"] = serde_json::json!(512);
+            r
+        }));
+        let r = focus(&d, &p, &bridge, Flavor::Stable, 550, None, Shown::Dashboard);
+        assert_eq!(r.activate, None);
+        assert!(r.message.contains("claude agents"));
+
+        // Precise plan but the window is on another desktop: the attempt says so.
+        let mut d = fake_with_hosts(&bridge);
+        d.responder = Some(responder());
+        d.spaces = false;
+        let r = focus(
+            &d,
+            &p,
+            &bridge,
+            Flavor::Stable,
+            521,
+            STARTED,
+            Shown::Session,
+        );
+        assert_eq!(r.hint.as_deref(), Some("spaces-setting"));
+        assert!(r.activate.is_some());
+
+        // No reply: fall back to activation, after the attempt.
+        let d = fake_with_hosts(&bridge);
+        let r = focus(
+            &d,
+            &p,
+            &bridge,
+            Flavor::Stable,
+            521,
+            STARTED,
+            Shown::Session,
+        );
+        assert_eq!(r.hint.as_deref(), Some("vscode-setup"));
+        assert!(r.activate.is_some());
+        assert_eq!(opens(&d).len(), 1);
+        assert!(opens(&d)[0].starts_with("open -g "));
+
+        // Panel sessions, tmux and reused pids make no window-level claim and open nothing.
+        for (pid, started) in [(540, STARTED), (602, STARTED), (521, Some(1))] {
+            let mut d = fake_with_hosts(&bridge);
+            d.responder = Some(responder());
+            let r = focus(
+                &d,
+                &p,
+                &bridge,
+                Flavor::Stable,
+                pid,
+                started,
+                Shown::Session,
+            );
+            assert!(r.activate.is_some(), "{pid}");
+            assert!(r.message.contains("window and terminal"), "{pid}");
+            assert!(opens(&d).is_empty(), "{pid}");
+        }
     }
 }
