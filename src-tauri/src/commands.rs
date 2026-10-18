@@ -388,6 +388,22 @@ pub fn set_link(state: Db, from: String, to: String, linked: bool) -> HubResult<
 /// meanwhile, the older click's fallback activation must not land over the newer one.
 static OPENS: launch::OpenGeneration = launch::OpenGeneration::new();
 
+/// Identify a live Claude Code session hosted in VS Code before its first Open click, so the
+/// frontend can offer the optional extension without sending the user to the wrong window.
+#[tauri::command]
+pub async fn vscode_session_host(state: Db<'_>, id: String) -> HubResult<Option<String>> {
+    let dbh = state.db.clone();
+    let claude_home = state.claude_home.clone();
+    blocking(move || {
+        let session = {
+            let c = dbh.lock().expect("db");
+            db::get_session(&c, &id)?
+        };
+        Ok(session.and_then(|s| launch::vscode_session_host(&s, &claude_home).map(str::to_owned)))
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn open_session(
     app: tauri::AppHandle,

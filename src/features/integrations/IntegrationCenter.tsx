@@ -235,11 +235,11 @@ function VsCodeExtensionRow() {
       <dd className="flex min-w-0 items-baseline justify-between gap-3">
         <span className="min-w-0">
           <span className="text-ink">{statuses === null ? "Checking…" : summaryLine(statuses)}</span>
-          <span className="block truncate text-[11px] text-ink-4">Lets Go to terminal pick the exact VS Code window and terminal</span>
+          <span className="block truncate text-[11px] text-ink-4">Selects the exact window and terminal for Claude Code sessions</span>
         </span>
         {statuses !== null && statuses.length > 0 && (
           <button className="btn h-6 shrink-0 px-2 text-[11.5px]" onClick={() => openOverlay({ kind: "vscode-extension" })}>
-            Set up…
+            {ok === true ? "Manage" : "Set up"}
           </button>
         )}
       </dd>

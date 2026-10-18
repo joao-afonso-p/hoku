@@ -101,6 +101,7 @@ export const api = {
   setLink: (from: string, to: string, linked: boolean) => call<void>("set_link", { from, to, linked }),
 
   openSession: (id: string) => call<OpenResult>("open_session", { id }),
+  vscodeSessionHost: (id: string) => call<VsCodeFlavor | null>("vscode_session_host", { id }),
   /** Claude Code in a new terminal tab, in `directory` or the project's root folder. */
   startSession: (projectId: string, directory: string | null) => call<OpenResult>("start_session", { projectId, directory }),
   /** The native folder chooser. `null` when cancelled. */

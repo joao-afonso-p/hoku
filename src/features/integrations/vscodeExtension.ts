@@ -1,7 +1,11 @@
-import type { VsCodeSetupResult, VsCodeStatus } from "../../lib/types";
+import type { VsCodeFlavor, VsCodeSetupResult, VsCodeStatus } from "../../lib/types";
 
 /** Settings key: whether Hoku may suggest the VS Code extension ("shown" once, or "never"). */
 export const VSCODE_PROMPT_KEY = "vscodeExtensionPrompt";
+
+export function setupPromptKey(flavor: VsCodeFlavor): string {
+  return `${VSCODE_PROMPT_KEY}.${flavor}`;
+}
 
 /** Compare dotted versions numerically ("0.10.0" > "0.9.1"). Pre-release tags are ignored. */
 export function compareVersions(a: string, b: string): number {
@@ -25,16 +29,34 @@ export function windowsLabel(n: number): string {
 
 /** One line per VS Code build: what the extension is doing there. */
 export function statusLine(s: VsCodeStatus): string {
-  if (s.installedVersion === null) return "Not installed";
-  if (updateAvailable(s)) return `Update available (v${s.installedVersion} → v${s.bundledVersion})`;
-  if (s.connectedWindows > 0) return `Connected to ${windowsLabel(s.connectedWindows)}`;
-  return `Installed (v${s.installedVersion}) — reload open ${s.name} windows`;
+  if (s.installedVersion === null) return "Setup needed · extension not installed";
+  if (updateAvailable(s)) return "Setup needed · update extension";
+  if (s.connectedWindows === 0) return `Setup needed · open or reload ${s.name}`;
+  if (!s.uriHandledBefore) return "Setup needed · allow the link in VS Code";
+  return `Connected to ${windowsLabel(s.connectedWindows)}`;
 }
 
 /** "connected" when windows report, "installed" when it's there but quiet, else "missing". */
 export function statusLevel(s: VsCodeStatus): "connected" | "installed" | "missing" {
   if (s.installedVersion === null) return "missing";
-  return s.connectedWindows > 0 && !updateAvailable(s) ? "connected" : "installed";
+  return s.connectedWindows > 0 && s.uriHandledBefore && !updateAvailable(s) ? "connected" : "installed";
+}
+
+/** Remember which incomplete setup was already offered, separately for Stable and Insiders. */
+export function setupPromptMarker(s: VsCodeStatus): string {
+  const stage = s.installedVersion === null ? "missing" : updateAvailable(s) ? "update" : "setup";
+  return `shown:${s.flavor}:${stage}`;
+}
+
+export function readyPromptMarker(flavor: VsCodeFlavor): string {
+  return `ready:${flavor}`;
+}
+
+/** Offer each incomplete setup once; offer it again if a previously working extension is removed. */
+export function needsFirstUseSetup(flavor: VsCodeFlavor | null, statuses: VsCodeStatus[], prompt: unknown): boolean {
+  if (!flavor || prompt === "never") return false;
+  const status = statuses.find((s) => s.flavor === flavor);
+  return status !== undefined && statusLevel(status) !== "connected" && prompt !== setupPromptMarker(status);
 }
 
 /** The install button's label, or null when the installed extension is current. */
@@ -47,9 +69,9 @@ export function installLabel(s: VsCodeStatus): string | null {
 export function setupMessage(status: VsCodeSetupResult["status"], name: string): string {
   switch (status) {
     case "ready":
-      return "Connected: VS Code let the Hoku extension open the link. If it asks again on Go to terminal, choose Open and tick “Do not ask me again”.";
+      return "Connected. You can go to your session.";
     case "no-reply":
-      return `${name} didn’t confirm. If it’s asking, choose Open, then try again.`;
+      return `No confirmation. Check ${name} for an Open prompt, then try again.`;
     case "not-running":
       return `Open ${name} first.`;
     case "two-instances":

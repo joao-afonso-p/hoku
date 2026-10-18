@@ -23,10 +23,10 @@ The extension comes inside Hoku. It isn't on the VS Code Marketplace or Open VSX
 
 <Steps>
 
-1. Open the setup sheet. Hoku offers it the first time Go to terminal lands in VS Code without the extension. You can also open it any time from **Integrations**, under Claude Code: **VS Code extension → Set up…**.
+1. The first time you click **Go to terminal** for a live Claude Code session in VS Code without setup, Hoku offers the extension **before** switching apps. You can choose **Continue to VS Code** to skip setup. The same sheet is always available from **Integrations → VS Code extension → Set up**.
 2. Click **Install in VS Code** (or **Install in VS Code Insiders**). Hoku runs VS Code's own `code --install-extension` with the copy bundled in Hoku.
 3. If VS Code was already open, reload its windows (**Developer: Reload Window** in the Command Palette, or quit and reopen VS Code). The sheet shows *Connected to N windows* once they report in.
-4. Click **Allow Hoku in VS Code** and answer VS Code's one-time question (below).
+4. Click **Allow link in VS Code**. While Hoku says *Waiting for approval*, go to your VS Code window, choose **Open** in its prompt, then return to Hoku.
 
 </Steps>
 
@@ -44,7 +44,7 @@ The first time Hoku asks VS Code to show a terminal, VS Code asks:
 
 Choose **Open**, and tick **Do not ask me again** so it doesn't ask on every click. This is VS Code's own question, and it's asked once per profile. Hoku never changes VS Code's settings to skip it.
 
-**Allow Hoku in VS Code** in the setup sheet brings VS Code forward and asks this question in the front window, so you see it. When it says *Connected*, VS Code let the link through; Hoku can't tell whether you ticked **Do not ask me again**, so if VS Code asks again later, tick it then. If you skip that step, the question can appear in a VS Code window behind other windows, and Go to terminal can't finish until you answer it. In that case Hoku tells you, and offers **Finish VS Code setup**. After choosing **Open**, click Go to terminal again.
+**Allow link in VS Code** in the setup sheet brings VS Code forward and asks this question in the front window. Hoku tells you to check VS Code while it waits. When it says *Connected*, you can return to Hoku and open the session. Hoku can't tell whether you ticked **Do not ask me again**, so if VS Code asks again later, tick it then. If you skip that step, Hoku offers **Finish VS Code setup** after an unconfirmed attempt.
 
 ## What it shares, and what it never reads
 

@@ -845,6 +845,29 @@ fn go_to_client(pid: i64, tty: &str, shown: Shown, ctx: &LaunchContext) -> Optio
     })
 }
 
+/// Read-only preflight for the first VS Code setup prompt. It only identifies the host of an
+/// existing live session; opening and focusing still happen in `open_claude_code`.
+pub fn vscode_session_host(
+    session: &Session,
+    claude_home: &std::path::Path,
+) -> Option<&'static str> {
+    if session.provider != Provider::ClaudeCode {
+        return None;
+    }
+    let id = validate_id(session.external_id.as_deref()?).ok()?;
+    let registry = read_registry(&claude_home.join("sessions"));
+    let live = registry.get(id)?;
+    let pid = if live.is_background() {
+        let job = validate_id(live.job_id.as_deref()?).ok()?;
+        attached_client(job)?.0
+    } else {
+        live.pid
+    };
+    hosting_app(pid)
+        .and_then(|(host, _)| Flavor::from_host(host))
+        .map(|flavor| flavor.scheme())
+}
+
 fn open_claude_code(session: &Session, ctx: &LaunchContext) -> HubResult<OpenResult> {
     let id = validate_id(session.external_id.as_deref().unwrap_or(""))?;
     let claude = ctx

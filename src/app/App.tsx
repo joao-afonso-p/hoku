@@ -121,7 +121,7 @@ export function App() {
         {overlay?.kind === "settings" && <SettingsSheet />}
         {overlay?.kind === "scan" && <ScanSheet />}
         {overlay?.kind === "spaces-help" && <SpacesHelpSheet app={overlay.app} />}
-        {overlay?.kind === "vscode-extension" && <VsCodeExtensionSheet step={overlay.step} />}
+        {overlay?.kind === "vscode-extension" && <VsCodeExtensionSheet step={overlay.step} sessionId={overlay.sessionId} flavor={overlay.flavor} />}
         <Toasts />
       </main>
     </div>

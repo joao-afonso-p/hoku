@@ -1,6 +1,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { isSessionVisible, visibilityFromSettings, VISIBILITY_KEYS, type GalaxyVisibility } from "../features/galaxy/visibility";
 import { notificationDestination } from "../features/notifications/notifications";
+import { needsFirstUseSetup, readyPromptMarker, setupPromptKey, setupPromptMarker, statusLevel, VSCODE_PROMPT_KEY } from "../features/integrations/vscodeExtension";
 import type { StatusKey } from "../features/runtime/status";
 import type { SessionFilter } from "../features/sessions/filter";
 import { api, type FollowUpInput, type ProjectPatch, type ProjectResumePatch, type SessionPatch } from "../lib/api";
@@ -216,8 +217,33 @@ export function escape() {
 
 // ───────────── sessions ─────────────
 
-export async function openSession(session: Session) {
+export async function openSession(session: Session, skipVsCodeSetup = false) {
   try {
+    if (!skipVsCodeSetup && session.provider === "claude-code" && getState().data.settings[VSCODE_PROMPT_KEY] !== "never") {
+      // Identify the live host without opening anything. A setup choice comes before the first
+      // jump to VS Code; other hosts keep their existing one-click behaviour.
+      try {
+        const flavor = await api.vscodeSessionHost(session.id);
+        if (flavor) {
+          const statuses = await api.vscodeExtensionStatus();
+          const status = statuses.find((item) => item.flavor === flavor);
+          const promptKey = setupPromptKey(flavor);
+          if (status && needsFirstUseSetup(flavor, statuses, getState().data.settings[promptKey])) {
+            const marker = setupPromptMarker(status);
+            await api.setSetting(promptKey, marker);
+            await api.setSetting(VSCODE_PROMPT_KEY, "shown");
+            setState((s) => ({ data: { ...s.data, settings: { ...s.data.settings, [promptKey]: marker, [VSCODE_PROMPT_KEY]: "shown" } } }));
+            openOverlay({ kind: "vscode-extension", sessionId: session.id, flavor });
+            return;
+          }
+          if (status && statusLevel(status) === "connected" && getState().data.settings[promptKey] !== readyPromptMarker(flavor)) {
+            await api.setSetting(promptKey, readyPromptMarker(flavor));
+          }
+        }
+      } catch {
+        // The setup check is optional; opening the session must still work.
+      }
+    }
     const r = await api.openSession(session.id);
     const route = routeOpenResult(r, getState().data.settings);
     if (route.toast) {
