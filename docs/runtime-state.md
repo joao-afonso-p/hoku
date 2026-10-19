@@ -218,7 +218,10 @@ Hoku, the target is kept until the UI has loaded.
 **Permission.** macOS asks the first time notifications (or the badge) are turned on in
 Settings, never at launch. If it's denied, or alerts or badges are turned off for Hoku in
 System Settings, Settings says so and links to Hoku's Notifications pane. Whether macOS shows
-the Dock count can depend on the "Badge application icon" setting there.
+the Dock count can depend on the "Badge application icon" setting there. If Hoku's preference
+is already on but this app build has not requested macOS permission, Settings offers an
+**Enable notifications** button. An authorized app with alert style set to **None** also gets
+a warning: macOS will not show a desktop banner in that style.
 
 **Limits.** Notifications are local: Hoku posts them itself, so none arrive while Hoku isn't
 running, and nothing is pushed from anywhere. Unbundled builds (`pnpm tauri dev`) can't use the

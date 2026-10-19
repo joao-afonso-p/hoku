@@ -396,7 +396,7 @@ mod native {
         ns_string, MainThreadMarker, NSArray, NSBundle, NSError, NSObject, NSString,
     };
     use objc2_user_notifications::{
-        UNAuthorizationOptions, UNAuthorizationStatus, UNMutableNotificationContent,
+        UNAlertStyle, UNAuthorizationOptions, UNAuthorizationStatus, UNMutableNotificationContent,
         UNNotification, UNNotificationDefaultActionIdentifier, UNNotificationPresentationOptions,
         UNNotificationRequest, UNNotificationResponse, UNNotificationSetting,
         UNNotificationSettings, UNNotificationSound, UNUserNotificationCenter,
@@ -557,10 +557,15 @@ mod native {
         let block = RcBlock::new(move |s: NonNull<UNNotificationSettings>| {
             // SAFETY: valid for the duration of the call.
             let s = unsafe { s.as_ref() };
-            let _ = tx.send((s.authorizationStatus(), s.alertSetting(), s.badgeSetting()));
+            let _ = tx.send((
+                s.authorizationStatus(),
+                s.alertSetting(),
+                s.alertStyle(),
+                s.badgeSetting(),
+            ));
         });
         center.getNotificationSettingsWithCompletionHandler(&block);
-        let Ok((auth, alerts, badges)) = rx.recv_timeout(Duration::from_secs(3)) else {
+        let Ok((auth, alerts, style, badges)) = rx.recv_timeout(Duration::from_secs(3)) else {
             return NotificationStatus::UNAVAILABLE;
         };
         NotificationStatus {
@@ -572,7 +577,9 @@ mod native {
                 UNAuthorizationStatus::Denied => "denied",
                 _ => "not-determined",
             },
-            alerts: alerts == UNNotificationSetting::Enabled,
+            // macOS can authorize alerts while the app's style is None, which still
+            // suppresses desktop banners. Report what the user can actually see.
+            alerts: alerts == UNNotificationSetting::Enabled && style != UNAlertStyle::None,
             badges: badges == UNNotificationSetting::Enabled,
         }
     }

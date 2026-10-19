@@ -212,17 +212,22 @@ function NeedsYouAlerts() {
       await api.setSetting(NOTIFY_KEYS[key], on);
       await reload();
       // Ask in context: macOS prompts the first time a banner or badge is turned on.
-      if (on && key !== "bounce" && status?.permission === "not-determined") setStatus(await api.requestNotificationPermission());
+      if (on && key !== "bounce") {
+        const current = await api.notificationStatus();
+        setStatus(current.permission === "not-determined" ? await api.requestNotificationPermission() : current);
+      }
     } catch (e) {
       fail(e);
     }
   };
 
+  const enableNotifications = () => void api.requestNotificationPermission().then(setStatus).catch(fail);
   const allowed = status?.permission === "authorized" || status?.permission === "provisional";
   const openSettings = () => void api.openNotificationSettings().catch(fail);
   const note = (() => {
     if (!status) return null;
     if (status.permission === "unavailable") return { text: "This build can’t post notifications. The installed Hoku app can.", fix: false };
+    if (status.permission === "not-determined" && (prefs.banners || prefs.badge)) return { text: "Allow Hoku notifications in macOS to show banners.", fix: true, enable: true };
     if (status.permission === "denied" && (prefs.banners || prefs.badge)) return { text: "Notifications for Hoku are turned off in macOS.", fix: true };
     if (prefs.banners && allowed && !status.alerts) return { text: "macOS is set not to show Hoku’s alerts.", fix: true };
     if (prefs.badge && allowed && !status.badges) return { text: "macOS is set not to badge Hoku’s icon.", fix: true };
@@ -240,8 +245,8 @@ function NeedsYouAlerts() {
         <div className="mt-2 flex items-center justify-between gap-3 rounded-[8px] border border-line bg-white/[0.02] px-2.5 py-1.5 text-[11.5px] text-ink-3">
           <span>{note.text}</span>
           {note.fix && (
-            <button className="btn h-6 shrink-0 px-2 text-[11px]" onClick={openSettings}>
-              Open System Settings
+            <button className="btn h-6 shrink-0 px-2 text-[11px]" onClick={"enable" in note ? enableNotifications : openSettings}>
+              {"enable" in note ? "Enable notifications" : "Open System Settings"}
             </button>
           )}
         </div>
