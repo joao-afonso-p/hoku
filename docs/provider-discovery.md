@@ -207,6 +207,44 @@ Deep link: the handler routes `claude://claude.ai/local_sessions/<id>` to the in
 `claudeURLHandler` warning in `~/Library/Logs/Claude/main.log`. Unknown paths do log a
 warning. Treated as **supported, verify visually**.
 
+### Remote Cowork sessions – discoverable, guarded (forward-compatible)
+
+Recent Cowork sessions are server-side ("remote") and use a new `session_…` id form (derived
+from an internal `cse_…` id). The app binary builds a single `remote-session-spaces.json` in
+the **same** `<account>/<org>/` dir as the `local_*.json` files. A remote session object carries
+`id`, `environment_id`/`environmentId`, a `status ∈ {active, archived, paused, failed, unknown}`,
+`title` and `tags`, plus heavy `config`/`events`/`session_context` blobs the adapter never reads.
+A new deep-link route `cowork_sessions` exists alongside `local_sessions`.
+
+This is handled by a **separate** adapter (`claude-cowork-remote`, `Provider::Claude`) so it has
+its own `flag_missing` scope: a transient unreadable/unrecognized index must not orphan the local
+adapter's rows. Discovery is tolerant to the exact container (it recurses to find session objects,
+since the top-level grouping isn't confirmed from the binary) but **strict on object shape** — an
+object counts as a remote session only with a non-empty string `id` **and** a session-specific
+discriminator: the `id` matches Claude Desktop's own canonical id validator
+(`^(?:session_|cse_)(?:staging_)?[A-Za-z0-9…]+$`) **or** it has a non-null `environment_id`/
+`environmentId`. A bare-UUID `id` with only a `status`/`title` is **rejected** (that shape is shared
+by spaces and project objects); `status` is used only to skip archived sessions, never to accept
+one. Archival is honored via both the `isArchived` boolean (as in the local format) and
+`status == "archived"`. A session with no reliable folder is left unassigned (never guessed). Scan
+never returns `Found([])` on an index it couldn't read, parse, or recognize (that becomes
+`Unavailable`/`Err`), so rows are never wrongly flagged missing.
+
+The discriminators are grounded in the app binary, but the **persisted** shape of
+`remote-session-spaces.json` was not confirmed against a real file (none existed on the dev
+machine). So discovery *shape* — not just open — is unverified: if a real index stores sessions in
+a form these rules don't match, discovery yields nothing and `scan` reports an error for this
+adapter rather than silently succeeding. The manual round-trip below (with a real session, or an
+anonymized sample) is what confirms both discovery and open.
+
+Open is **guarded, unverified pending real data**: the `cowork_sessions/<id>` route could not be
+verified from disk (no new-format data existed on the dev machine, so `session_…` → conversation
+resolution runs through the app's in-memory maps, not something on disk). Remote entries therefore
+get **no `deep_link`**; the candidate link is stashed in `metadata.openCandidate` only. Opening a
+remote Cowork session opens **Claude Desktop** and says Hoku can't yet reach that specific session
+— it never fires the unverified link or claims a session opened. Lifting the guard requires the
+manual deep-link round-trip described below.
+
 ### Claude Code inside Claude Desktop
 
 `claude://code/continue?session=<id>` exists, but the accepted session-id format is internal.
@@ -215,8 +253,11 @@ It is not used; Claude Code sessions open in a terminal instead.
 ### MVP decision
 
 - Chats: manual add, normalized to `claude://claude.ai/chat/<uuid>`, opened with `open`.
-- Cowork: read-only discovery from the JSON metadata above, opened with
+- Cowork (local): read-only discovery from the JSON metadata above, opened with
   `claude://claude.ai/local_sessions/<id>`.
+- Cowork (remote): read-only discovery from `remote-session-spaces.json` (separate adapter),
+  opened guarded — Claude Desktop is brought forward, the unverified `cowork_sessions/<id>` link
+  is never fired until the manual round-trip confirms it.
 - Account: `claude auth status` (Claude Code CLI) reports email, org and plan without secrets.
   It serves as the account hint for the Claude provider.
 
@@ -228,13 +269,23 @@ It is not used; Claude Code sessions open in a terminal instead.
 |---|---|---|---|---|
 | Claude Code | ✅ transcripts + live registry | ✅ `attach` / focus TTY / `--resume` | copy `claude --resume <id>` | ✅ `claude auth status` |
 | Claude Desktop chat | ❌ not safe (server-side, LevelDB cache) | ✅ `claude://claude.ai/chat/<uuid>` | open web URL | ⚠ external app (via CLI hint) |
-| Claude Desktop Cowork | ✅ local JSON metadata | ✅ `claude://claude.ai/local_sessions/<id>` (code-verified) | open Claude | same |
+| Claude Desktop Cowork (local) | ✅ local JSON metadata | ✅ `claude://claude.ai/local_sessions/<id>` (code-verified) | open Claude | same |
+| Claude Desktop Cowork (remote) | ✅ `remote-session-spaces.json` (separate adapter, guarded) | ⚠ `claude://claude.ai/cowork_sessions/<id>` **unverified**, not fired | open Claude Desktop (honest "can't reach this session yet") | same |
 | Codex Desktop | ✅ `state_*.sqlite` (read-only) | ✅ `codex://threads/<id>` (log-verified) | copy thread id | ⚠ auth mode only (`codex login status`) |
 
 ## 6. Uncertain / not pursued
 
 - `claude-cli://` URL formats: the handler binary is the CLI itself. The format is
   undocumented, so it is not used.
+- Remote Cowork open (`cowork_sessions/<id>`): unverified. No new-format data existed on the dev
+  machine, so the route couldn't be exercised. Completion is gated on a manual round-trip — read a
+  real session id from `remote-session-spaces.json`, run `open "claude://claude.ai/cowork_sessions/<id>"`,
+  and check whether it lands on the exact conversation (and whether `main.log` logs a
+  `claudeURLHandler` warning). If it reliably does, a small follow-up flips `openUnverified` off.
+- Cowork **spaces** (`spaces.json` / the space objects inside `remote-session-spaces.json`):
+  grouping sessions by space is a **follow-up**, out of scope here. The remote adapter recognizes
+  and rejects space-shaped objects so they're never mistaken for sessions, but does not yet surface
+  spaces as projects.
 - Codex account identity (email): only in `auth.json`, which is not read.
 - Claude Desktop chat titles: server-side only. Titles come from the user on manual add.
 - Focusing an interactive Claude Code terminal depends on the user granting Automation
