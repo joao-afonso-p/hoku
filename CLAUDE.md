@@ -20,7 +20,12 @@ Tauri 2 (Rust) + React 19 + TypeScript + Tailwind v4 + SQLite (rusqlite, bundled
 - `src-tauri/src/`: all I/O. `commands.rs` (IPC surface), `db.rs` (Hoku's own SQLite:
   schema, ordered `MIGRATIONS` tracked by `PRAGMA user_version`, merge rules), `scan.rs`,
   `runtime.rs` (4 s monitor + watchdog), `launch.rs` (deep links, terminals),
-  `integrations.rs`, `providers/` (one read-only adapter per source).
+  `integrations.rs`, `providers/` (one read-only adapter per source), `vscode_bridge.rs`
+  (matches sessions to VS Code terminals and asks the extension to focus them).
+- `extensions/vscode/`: the optional Hoku VS Code extension (`joao-afonso-p.hoku-vscode`,
+  never rename it), bundled into Hoku.app as a VSIX by `pnpm vscode:package`. It reports
+  terminal pids per window and handles Hoku's `/focus` and `/ping` links. See
+  [docs/vscode-extension.md](docs/vscode-extension.md).
 - `src/`: presentation only. `lib/types.ts` mirrors the Rust models, `lib/api.ts` wraps
   `invoke`, `providers/index.ts` holds provider UI descriptors, `features/` holds views.
 - Bundle identifier `com.hoku.app` (never change it: the index location depends on it).
@@ -49,7 +54,10 @@ Follow "Adding a new provider" in CONTRIBUTING.md step by step.
 
 - Provider stores (`~/.claude`, `~/.codex`, `~/Library/Application Support/Claude`) are
   read-only: never write, lock, move or migrate them. Open foreign SQLite with
-  `SQLITE_OPEN_READ_ONLY` and `PRAGMA query_only`. Hoku writes only its own `hub.sqlite`.
+  `SQLITE_OPEN_READ_ONLY` and `PRAGMA query_only`. Hoku writes only its own `hub.sqlite`
+  and short-lived, private (0600 files, 0700 folders) VS Code bridge files in its own App
+  Support folder, `vscode-bridge/`. Those must never contain workspace paths, terminal names
+  or terminal contents.
 - Never open credential or token files. Account state comes only from `claude auth status`
   and `codex login status`, parsing non-secret fields.
 - Store titles (≤64 chars), a ≤200-char preview and ≤160-char runtime detail only. Never

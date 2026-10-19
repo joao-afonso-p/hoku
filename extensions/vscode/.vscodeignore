@@ -1,0 +1,8 @@
+# Ship only the compiled extension, its manifest, README and LICENSE.
+**
+!out/**
+!package.json
+!README.md
+!LICENSE
+out/**/*.map
+out/**/*.test.js

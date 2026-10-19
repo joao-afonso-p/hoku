@@ -3,6 +3,7 @@
 
 use crate::models::{HubError, HubResult, Provider, Session};
 use crate::providers::claude_code::read_registry;
+use crate::vscode_bridge::{self, Desktop, Flavor, ProcTable, RealDesktop};
 use regex::Regex;
 use serde::Serialize;
 use std::path::Path;
@@ -170,6 +171,29 @@ pub struct OpenResult {
     pub activate: Option<String>,
     /// UI follow-up: "spaces-setting" = explain the macOS desktop-switching setting.
     pub hint: Option<String>,
+    /// The open did exactly what was asked: a deep link, a new or resumed session, the
+    /// session's own terminal tab, or (VS Code) a confirmed precise focus. False for honest
+    /// partial results, which the UI shows as information rather than success.
+    pub exact: bool,
+}
+
+/// Counts "Go to terminal" (and other) opens, so a slower, older open never activates an app
+/// over a newer one: its result is only brought forward while it's still the latest.
+#[derive(Debug, Default)]
+pub struct OpenGeneration(std::sync::atomic::AtomicU64);
+
+impl OpenGeneration {
+    pub const fn new() -> OpenGeneration {
+        OpenGeneration(std::sync::atomic::AtomicU64::new(0))
+    }
+    /// Start an open; returns its generation.
+    pub fn begin(&self) -> u64 {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+    }
+    /// No open has started since `generation`.
+    pub fn is_current(&self, generation: u64) -> bool {
+        self.0.load(std::sync::atomic::Ordering::SeqCst) == generation
+    }
 }
 
 fn ok(method: &str, message: impl Into<String>) -> HubResult<OpenResult> {
@@ -178,6 +202,7 @@ fn ok(method: &str, message: impl Into<String>) -> HubResult<OpenResult> {
         message: message.into(),
         activate: None,
         hint: None,
+        exact: true,
     })
 }
 
@@ -187,6 +212,7 @@ fn ok_in(app: TerminalApp, method: &str, message: impl Into<String>) -> HubResul
         message: message.into(),
         activate: Some(app.bundle_id().into()),
         hint: None,
+        exact: true,
     })
 }
 
@@ -443,34 +469,30 @@ pub fn host_of_executable(comm: &str) -> Option<HostApp> {
 /// In VS Code the chain is `claude` ← shell ← `Code Helper` (the terminal's pty host) ← `Code`;
 /// started by an extension it is `claude` ← `Code Helper (Plugin)`. tmux and screen servers
 /// are re-parented to launchd, so a session inside them has no host.
+#[cfg(test)]
 pub fn host_in_process_list(ps: &str, pid: i64) -> Option<HostApp> {
-    let procs: std::collections::HashMap<i64, (i64, &str)> = ps
-        .lines()
-        .filter_map(|line| {
-            let line = line.trim_start();
-            let (pid, rest) = line.split_once(char::is_whitespace)?;
-            let (ppid, comm) = rest.trim_start().split_once(char::is_whitespace)?;
-            Some((pid.parse().ok()?, (ppid.parse().ok()?, comm.trim())))
-        })
-        .collect();
+    host_in_table(&ProcTable::parse(ps), pid)
+}
+
+pub fn host_in_table(procs: &ProcTable, pid: i64) -> Option<HostApp> {
     let mut current = pid;
     for _ in 0..12 {
-        let (ppid, comm) = procs.get(&current)?;
+        let (ppid, comm) = procs.get(current)?;
         if let Some(host) = host_of_executable(comm) {
             return Some(host);
         }
-        if *ppid <= 1 {
+        if ppid <= 1 {
             return None;
         }
-        current = *ppid;
+        current = ppid;
     }
     None
 }
 
-/// Which app hosts `pid`, from one snapshot of the process table.
-fn hosting_app(pid: i64) -> Option<HostApp> {
-    let ps = run(Command::new("/bin/ps").args(["-axo", "pid=,ppid=,comm="])).ok()?;
-    host_in_process_list(&ps, pid)
+/// Which app hosts `pid`, from one snapshot of the process table (returned with it).
+fn hosting_app(pid: i64) -> Option<(HostApp, ProcTable)> {
+    let procs = ProcTable::snapshot()?;
+    host_in_table(&procs, pid).map(|host| (host, procs))
 }
 
 /// Select the tab hosting `tty`. Returns the id of the window holding it (for iTerm and
@@ -666,18 +688,40 @@ pub enum Shown {
     Dashboard,
 }
 
-/// Go to a session in a host without scriptable terminal tabs (VS Code): the caller activates
-/// the app, which brings its windows forward. Nothing is started.
-fn focus_host_app(host: HostApp, shown: Shown, ctx: &LaunchContext) -> OpenResult {
-    let elsewhere = !ctx.hoku_fullscreen
-        && !spaces_switch_on_activate()
-        && !app_window_on_current_space(host.bundle_id());
-    host_app_result(host, shown, elsewhere)
+/// Go to a session in a host without scriptable terminal tabs (VS Code). When the Hoku
+/// extension reports the session's terminal, that window shows it and nothing else is
+/// activated; otherwise the caller activates the app, which brings its windows forward.
+/// `pid` is the session's (or client's) process, found in `procs`; `claude_started_at` the
+/// live registry's start time for it, None for a `claude attach`/`agents` client. Nothing is
+/// started.
+fn focus_host_app(
+    host: HostApp,
+    shown: Shown,
+    pid: i64,
+    claude_started_at: Option<i64>,
+    procs: &ProcTable,
+    ctx: &LaunchContext,
+) -> OpenResult {
+    let d = RealDesktop {
+        hoku_fullscreen: ctx.hoku_fullscreen,
+    };
+    match Flavor::from_host(host) {
+        Some(flavor) => vscode_bridge::focus(
+            &d,
+            procs,
+            &ctx.vscode_bridge,
+            flavor,
+            pid,
+            claude_started_at,
+            shown,
+        ),
+        None => host_app_result(host, shown, !d.spaces_ok(host.bundle_id())),
+    }
 }
 
-/// VS Code exposes no API to select one of its integrated-terminal tabs from outside the app,
-/// so the message says where to look. `elsewhere`: its windows are on another desktop and macOS
-/// won't switch there on activation; they can't be moved here without Accessibility access.
+/// VS Code without a precise match: bring the app forward and say where to look.
+/// `elsewhere`: its windows are on another desktop and macOS won't switch there on
+/// activation; they can't be moved here without Accessibility access.
 pub fn host_app_result(host: HostApp, shown: Shown, elsewhere: bool) -> OpenResult {
     let name = host.name();
     let (message, hint) = match (shown, elsewhere) {
@@ -691,13 +735,13 @@ pub fn host_app_result(host: HostApp, shown: Shown, elsewhere: bool) -> OpenResu
         ),
         (Shown::Session, false) => (
             format!(
-                "Switched to {name}, where this session is running. Hoku can't select its terminal tab there."
+                "Switched to {name}, where this session is running. Hoku can't select its window and terminal there."
             ),
             None,
         ),
         (Shown::Dashboard, false) => (
             format!(
-                "Switched to {name}, where `claude agents` is open. Pick this session there; Hoku can't select its terminal tab."
+                "Switched to {name}, where `claude agents` is open. Pick this session there; Hoku can't select its window and terminal."
             ),
             None,
         ),
@@ -707,6 +751,7 @@ pub fn host_app_result(host: HostApp, shown: Shown, elsewhere: bool) -> OpenResu
         message,
         activate: Some(host.bundle_id().into()),
         hint,
+        exact: false,
     }
 }
 
@@ -719,6 +764,8 @@ pub struct LaunchContext {
     /// Hoku is in its own full-screen Space: activating another app always leaves it, so a
     /// terminal on another desktop is reachable without moving it.
     pub hoku_fullscreen: bool,
+    /// `<home>/Library/Application Support/com.hoku.app/vscode-bridge` (a tempdir in tests).
+    pub vscode_bridge: std::path::PathBuf,
 }
 
 /// "Go to terminal" / "Open in …": decided from live state at call time, never from the last
@@ -771,12 +818,12 @@ fn open_codex(session: &Session) -> HubResult<OpenResult> {
 }
 
 /// Switch to the app hosting a `claude` client of a background session (pid and tty from `ps`):
-/// VS Code is brought forward, an iTerm or Terminal tab is selected. None when its host can't be
-/// reached (tmux, Warp, a closed tab), so the caller attaches in a new tab instead.
+/// VS Code shows its terminal (or comes forward), an iTerm or Terminal tab is selected. None when
+/// its host can't be reached (tmux, Warp, a closed tab), so the caller attaches in a new tab.
 fn go_to_client(pid: i64, tty: &str, shown: Shown, ctx: &LaunchContext) -> Option<OpenResult> {
-    let host = hosting_app(pid)?;
+    let (host, procs) = hosting_app(pid)?;
     let Some(app) = host.terminal() else {
-        return Some(focus_host_app(host, shown, ctx));
+        return Some(focus_host_app(host, shown, pid, None, &procs, ctx));
     };
     focus_tty(app, tty).ok()??;
     let message = match shown {
@@ -794,7 +841,31 @@ fn go_to_client(pid: i64, tty: &str, shown: Shown, ctx: &LaunchContext) -> Optio
         message,
         activate: Some(app.bundle_id().into()),
         hint: None,
+        exact: true,
     })
+}
+
+/// Read-only preflight for the first VS Code setup prompt. It only identifies the host of an
+/// existing live session; opening and focusing still happen in `open_claude_code`.
+pub fn vscode_session_host(
+    session: &Session,
+    claude_home: &std::path::Path,
+) -> Option<&'static str> {
+    if session.provider != Provider::ClaudeCode {
+        return None;
+    }
+    let id = validate_id(session.external_id.as_deref()?).ok()?;
+    let registry = read_registry(&claude_home.join("sessions"));
+    let live = registry.get(id)?;
+    let pid = if live.is_background() {
+        let job = validate_id(live.job_id.as_deref()?).ok()?;
+        attached_client(job)?.0
+    } else {
+        live.pid
+    };
+    hosting_app(pid)
+        .and_then(|(host, _)| Flavor::from_host(host))
+        .map(|flavor| flavor.scheme())
 }
 
 fn open_claude_code(session: &Session, ctx: &LaunchContext) -> HubResult<OpenResult> {
@@ -845,11 +916,20 @@ fn open_claude_code(session: &Session, ctx: &LaunchContext) -> HubResult<OpenRes
                 format!("pid {}", live.pid),
             ));
         } else {
-            let host = hosting_app(live.pid);
-            // VS Code: bring the app forward. Its terminal tabs can't be selected from outside.
-            if let Some(host) = host.filter(|h| h.terminal().is_none()) {
-                return Ok(focus_host_app(host, Shown::Session, ctx));
+            let hosted = hosting_app(live.pid);
+            // VS Code: its terminal is selected through the Hoku extension, or the app comes
+            // forward.
+            if let Some((host, procs)) = hosted.as_ref().filter(|(h, _)| h.terminal().is_none()) {
+                return Ok(focus_host_app(
+                    *host,
+                    Shown::Session,
+                    live.pid,
+                    live.started_at,
+                    procs,
+                    ctx,
+                ));
             }
+            let host = hosted.map(|(h, _)| h);
             if let (Some(app), Some(tty)) = (host.and_then(|h| h.terminal()), tty_of(live.pid)) {
                 match focus_tty(app, &tty) {
                     Ok(Some(window)) => {
@@ -869,7 +949,8 @@ fn open_claude_code(session: &Session, ctx: &LaunchContext) -> HubResult<OpenRes
                             }
                         }
                         // The caller brings the app forward on the main thread (see `activate_app`).
-                        return Ok(OpenResult { method: "focus".into(), message, activate: Some(app.bundle_id().into()), hint });
+                        let exact = hint.is_none();
+                        return Ok(OpenResult { method: "focus".into(), message, activate: Some(app.bundle_id().into()), hint, exact });
                     }
                     Ok(None) => {}
                     Err(e) if e.contains("-1743") => {
@@ -975,6 +1056,37 @@ pub fn choose_folder(_: Option<&str>, _: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_latest_open_may_bring_an_app_forward() {
+        let opens = OpenGeneration::new();
+        let first = opens.begin();
+        assert!(opens.is_current(first));
+        // A second click while the first is still waiting on VS Code.
+        let second = opens.begin();
+        assert!(
+            !opens.is_current(first),
+            "the older click's fallback must not activate"
+        );
+        assert!(opens.is_current(second));
+        // Concurrent clicks each get their own generation; only the last is current.
+        let shared = std::sync::Arc::new(OpenGeneration::new());
+        let gens: Vec<u64> = (0..8)
+            .map(|_| {
+                let s = shared.clone();
+                std::thread::spawn(move || s.begin())
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|h| h.join().unwrap())
+            .collect();
+        let mut sorted = gens.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), 8);
+        assert_eq!(gens.iter().filter(|g| shared.is_current(**g)).count(), 1);
+        assert!(shared.is_current(8));
+    }
 
     #[test]
     fn quoting_neutralizes_injection() {
@@ -1196,7 +1308,7 @@ mod tests {
         let r = host_app_result(HostApp::VsCode, Shown::Session, false);
         assert_eq!(r.method, "focus");
         assert_eq!(r.activate.as_deref(), Some("com.microsoft.VSCode"));
-        assert!(r.message.contains("VS Code") && r.message.contains("terminal tab"));
+        assert!(r.message.contains("VS Code") && r.message.contains("window and terminal"));
         assert_eq!(r.hint, None);
         let r = host_app_result(HostApp::VsCodeInsiders, Shown::Session, true);
         assert_eq!(r.activate.as_deref(), Some("com.microsoft.VSCodeInsiders"));

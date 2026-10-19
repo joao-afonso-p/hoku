@@ -11,6 +11,7 @@ Hoku is local-first: it runs entirely on your Mac and has no server behind it. T
 - Other apps' data is only ever **read**, never changed.
 - Hoku never reads passwords, tokens or credential files.
 - It stores a title and a short preview per session, never whole conversations.
+- The optional [VS Code extension](/hoku/guides/vscode-extension/) shares only process numbers and a window number with Hoku, through a private folder on your Mac.
 - Nothing leaves your Mac unless you click **Generate draft** in [Resume](/hoku/guides/resume/#ai-drafts-optional), or share a recap yourself.
 
 ## What Hoku reads
@@ -32,7 +33,7 @@ Hoku never creates, modifies, moves, locks or deletes anything in those places. 
 
 ## What Hoku stores
 
-Everything Hoku stores is in one file on your Mac: `~/Library/Application Support/com.hoku.app/hub.sqlite`. See [Your data](/hoku/privacy/your-data/).
+Everything Hoku stores is in one file on your Mac: `~/Library/Application Support/com.hoku.app/hub.sqlite`. See [Your data](/hoku/privacy/your-data/). The only other files Hoku writes are the short-lived [VS Code extension](#the-vs-code-extension) files described below.
 
 Per session:
 
@@ -46,9 +47,22 @@ And what you add yourself: projects, notes, favorites, follow-ups and reminders,
 
 **Never stored:** full transcripts, prompts beyond the 200-character preview, tool output, file contents, system prompts, passwords or tokens.
 
+## The VS Code extension
+
+The optional [Hoku extension for VS Code](/hoku/guides/vscode-extension/) lets Go to terminal pick the exact VS Code window and terminal. It comes inside Hoku and is installed with VS Code's own command-line tool; nothing is downloaded. It and Hoku exchange small files in a private folder, readable only by you (folders 0700, files 0600):
+
+```text
+~/Library/Application Support/com.hoku.app/vscode-bridge/
+```
+
+- `windows/`: one file per VS Code window, written by the extension: its terminals' process numbers, the VS Code window number, the VS Code and extension versions, and timestamps. It's removed when the window closes.
+- `requests/` and `replies/`: one request per click, written by Hoku, and one reply, written by the extension, with the same kind of numbers, timestamps and a status word such as *shown*. They live a few seconds and Hoku deletes them. Anything older than a minute is cleaned up.
+
+**Never in these files:** terminal contents, terminal names, file names, workspace paths or working directories. The extension never types into a terminal and never changes your VS Code settings. Nothing from this folder goes into Hoku's index, and there's no network involved: no server, no listener, no requests.
+
 ## Network
 
-Hoku makes no network requests of its own. Its interface can't load anything from the internet: its content security policy allows only its own files. The only outside programs it runs are macOS tools, the providers' own command-line tools (to read their version and sign-in status, and for AI drafts if you use them), and the terminal commands you trigger with **Go to terminal**.
+Hoku makes no network requests of its own. Its interface can't load anything from the internet: its content security policy allows only its own files. The only outside programs it runs are macOS tools, the providers' own command-line tools (to read their version and sign-in status, and for AI drafts if you use them), the terminal commands you trigger with **Go to terminal**, and VS Code's own command-line tool when you install the VS Code extension.
 
 ### The one exception: AI drafts
 

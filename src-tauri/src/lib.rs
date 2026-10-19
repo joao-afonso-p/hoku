@@ -13,6 +13,7 @@ mod recap;
 mod resume;
 mod runtime;
 mod scan;
+pub mod vscode_bridge;
 
 use commands::AppState;
 use std::sync::{Arc, Mutex};
@@ -71,6 +72,7 @@ pub fn run() {
                 commands::delete_session,
                 commands::set_link,
                 commands::open_session,
+                commands::vscode_session_host,
                 commands::start_session,
                 commands::choose_folder,
                 commands::copy_text,
@@ -96,7 +98,10 @@ pub fn run() {
                 commands::take_notification_target,
                 commands::load_demo,
                 commands::clear_demo,
-                commands::database_path
+                commands::database_path,
+                commands::vscode_extension_status,
+                commands::install_vscode_extension,
+                commands::vscode_setup_ping
                 $(, $extra)*
             ]
         };

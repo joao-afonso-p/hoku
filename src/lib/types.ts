@@ -186,8 +186,44 @@ export interface ScanReport {
 export interface OpenResult {
   method: "deep-link" | "attach" | "resume" | "focus" | "fallback" | "new";
   message: string;
-  /** "spaces-setting": the terminal is on another desktop and macOS won't switch there. */
-  hint?: string | null;
+  hint?: OpenHint | null;
+  /**
+   * The open did exactly what was asked (a deep link, a new or resumed session, the session's
+   * own terminal tab, or VS Code's confirmed precise focus). False for partial results.
+   */
+  exact?: boolean;
+}
+
+/**
+ * A follow-up for the UI after an open. "spaces-setting": the terminal is on another desktop
+ * and macOS won't switch there. "vscode-extension": VS Code came forward, but without the
+ * Hoku extension it can't pick the window and terminal. "vscode-setup": the extension is
+ * installed, but VS Code hasn't been allowed to let it open links yet.
+ */
+export type OpenHint = "spaces-setting" | "vscode-extension" | "vscode-setup";
+
+/** A VS Code build, keyed by its URI scheme. */
+export type VsCodeFlavor = "vscode" | "vscode-insiders";
+
+/** The Hoku extension's state in one installed VS Code build. */
+export interface VsCodeStatus {
+  flavor: VsCodeFlavor;
+  name: string;
+  appInstalled: boolean;
+  /** Running instances (main processes). More than one means Hoku can't tell them apart. */
+  running: number;
+  installedVersion: string | null;
+  bundledVersion: string;
+  /** This build of Hoku carries the extension. */
+  bundled: boolean;
+  /** Windows whose extension is reporting right now, remote ones included. */
+  connectedWindows: number;
+  /** VS Code has already let the extension open a link at least once. */
+  uriHandledBefore: boolean;
+}
+
+export interface VsCodeSetupResult {
+  status: "ready" | "no-reply" | "not-running" | "two-instances";
 }
 
 export interface ParsedReference {

@@ -10,6 +10,7 @@ use crate::recap::{self, Outcome, OutcomeInput, Recap, RecapQuery};
 use crate::resume;
 use crate::runtime::{self, MonitorState};
 use crate::scan;
+use crate::vscode_bridge;
 use rusqlite::Connection;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -383,6 +384,26 @@ pub fn set_link(state: Db, from: String, to: String, linked: bool) -> HubResult<
 
 // ───────────────────────────── opening ─────────────────────────────
 
+/// The latest open. A "Go to terminal" can wait seconds for VS Code; when the user clicks again
+/// meanwhile, the older click's fallback activation must not land over the newer one.
+static OPENS: launch::OpenGeneration = launch::OpenGeneration::new();
+
+/// Identify a live Claude Code session hosted in VS Code before its first Open click, so the
+/// frontend can offer the optional extension without sending the user to the wrong window.
+#[tauri::command]
+pub async fn vscode_session_host(state: Db<'_>, id: String) -> HubResult<Option<String>> {
+    let dbh = state.db.clone();
+    let claude_home = state.claude_home.clone();
+    blocking(move || {
+        let session = {
+            let c = dbh.lock().expect("db");
+            db::get_session(&c, &id)?
+        };
+        Ok(session.and_then(|s| launch::vscode_session_host(&s, &claude_home).map(str::to_owned)))
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn open_session(
     app: tauri::AppHandle,
@@ -397,6 +418,7 @@ pub async fn open_session(
             .and_then(|w| w.is_fullscreen().ok())
             .unwrap_or(false)
     };
+    let generation = OPENS.begin();
     yield_to_hosts(&app);
     blocking(move || {
         let (session, pref) = {
@@ -415,13 +437,19 @@ pub async fn open_session(
             terminal_pref: pref,
             claude_home,
             hoku_fullscreen,
+            vscode_bridge: vscode_bridge_root(),
         };
         let result = launch::open_session(&session, &ctx)?;
         db::mark_opened(&dbh.lock().expect("db"), &session.id)?;
-        bring_forward(&app, &result);
+        bring_forward(&app, &result, generation);
         Ok(result)
     })
     .await
+}
+
+/// Where the Hoku VS Code extension and Hoku exchange window records, requests and replies.
+fn vscode_bridge_root() -> std::path::PathBuf {
+    crate::vscode_bridge::bridge_root(std::path::Path::new(&crate::association::home_dir()))
 }
 
 /// Yield the foreground now, synchronously, while Hoku is certainly still frontmost.
@@ -434,21 +462,135 @@ fn yield_to_hosts(app: &tauri::AppHandle) {
     let _ = rx.recv_timeout(std::time::Duration::from_millis(500));
 }
 
-/// Bring the app a launch went to (a terminal) to the front, on the main thread.
-fn bring_forward(app: &tauri::AppHandle, result: &OpenResult) {
+// ───────────────────────────── VS Code extension ─────────────────────────────
+
+fn vscode_flavor(flavor: &str) -> HubResult<vscode_bridge::Flavor> {
+    vscode_bridge::Flavor::from_scheme(flavor)
+        .ok_or_else(|| HubError::new("That isn't a VS Code build Hoku knows."))
+}
+
+/// The VSIX shipped inside Hoku.app, when this build has one.
+fn bundled_vsix(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    use tauri::Manager;
+    app.path()
+        .resolve(
+            "vscode/hoku-vscode.vsix",
+            tauri::path::BaseDirectory::Resource,
+        )
+        .ok()
+        .filter(|p| p.is_file())
+}
+
+/// One entry per VS Code build installed on this Mac: whether the Hoku extension is
+/// installed, current, and reporting windows.
+#[tauri::command]
+pub async fn vscode_extension_status(
+    app: tauri::AppHandle,
+) -> HubResult<Vec<vscode_bridge::VsCodeStatus>> {
+    use vscode_bridge::*;
+    let bundled = bundled_vsix(&app).is_some();
+    blocking(move || {
+        let home = std::path::PathBuf::from(crate::association::home_dir());
+        let procs = ProcTable::snapshot().unwrap_or_default();
+        let d = RealDesktop {
+            hoku_fullscreen: false,
+        };
+        let bridge = vscode_bridge_root();
+        gc(&d, &bridge, &procs);
+        let records = read_records(&bridge);
+        Ok(Flavor::ALL
+            .iter()
+            .filter_map(|&flavor| {
+                let app = find_app(flavor, &home)?;
+                let installed = cli_path(&app)
+                    .and_then(|cli| run_cli(&cli, &list_args(), LIST_TIMEOUT_MS).ok())
+                    .filter(|o| o.success)
+                    .and_then(|o| parse_installed_version(&o.stdout));
+                Some(status_for(
+                    flavor, true, installed, bundled, &procs, &records, &d,
+                ))
+            })
+            .collect())
+    })
+    .await
+}
+
+/// Install (or update) the bundled extension with that build's own CLI.
+#[tauri::command]
+pub async fn install_vscode_extension(app: tauri::AppHandle, flavor: String) -> HubResult<()> {
+    use vscode_bridge::*;
+    let flavor = vscode_flavor(&flavor)?;
+    let vsix = bundled_vsix(&app).ok_or_else(|| {
+        HubError::new("This build of Hoku doesn't include the VS Code extension.")
+    })?;
+    blocking(move || {
+        let fail = format!("{} couldn't install the extension.", flavor.name());
+        let home = std::path::PathBuf::from(crate::association::home_dir());
+        let cli = find_app(flavor, &home)
+            .and_then(|a| cli_path(&a))
+            .ok_or_else(|| {
+                HubError::with_detail(
+                    fail.clone(),
+                    format!("No {} command-line tool was found.", flavor.app_name()),
+                )
+            })?;
+        let out = run_cli(&cli, &install_args(&vsix), INSTALL_TIMEOUT_MS)
+            .map_err(|e| HubError::with_detail(fail.clone(), e))?;
+        if !out.success {
+            return Err(HubError::with_detail(fail, tail(&out.stderr, 300)));
+        }
+        Ok(())
+    })
+    .await
+}
+
+/// The one-time setup step: VS Code asks the user to allow the extension to open a link, so
+/// send a ping now (in the foreground) and wait for the extension's answer.
+#[tauri::command]
+pub async fn vscode_setup_ping(
+    app: tauri::AppHandle,
+    flavor: String,
+) -> HubResult<vscode_bridge::SetupResult> {
+    use vscode_bridge::*;
+    let flavor = vscode_flavor(&flavor)?;
+    yield_to_hosts(&app);
+    blocking(move || {
+        let procs = ProcTable::snapshot().unwrap_or_default();
+        let d = RealDesktop {
+            hoku_fullscreen: false,
+        };
+        Ok(setup_ping(
+            &d,
+            &vscode_bridge_root(),
+            flavor,
+            &procs,
+            PING_WAIT_MS,
+        ))
+    })
+    .await
+}
+
+/// Bring the app a launch went to (a terminal) to the front, on the main thread. Skipped when
+/// a newer open started since `generation`: that open decides what comes forward.
+fn bring_forward(app: &tauri::AppHandle, result: &OpenResult, generation: u64) {
     let Some(bundle) = result.activate.clone() else {
         return;
     };
+    if !OPENS.is_current(generation) {
+        return;
+    }
     let b = bundle.clone();
     let _ = app.run_on_main_thread(move || {
-        launch::activate_app(&b);
+        if OPENS.is_current(generation) {
+            launch::activate_app(&b);
+        }
     });
     // Verify, and retry once through LaunchServices if the terminal still isn't in front.
     let app2 = app.clone();
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(300));
         let _ = app2.run_on_main_thread(move || {
-            if !launch::is_active(&bundle) {
+            if OPENS.is_current(generation) && !launch::is_active(&bundle) {
                 launch::open_by_bundle(&bundle);
                 launch::activate_app(&bundle);
             }
@@ -474,6 +616,7 @@ pub async fn start_session(
 ) -> HubResult<OpenResult> {
     let dbh = state.db.clone();
     let claude_home = state.claude_home.clone();
+    let generation = OPENS.begin();
     yield_to_hosts(&app);
     blocking(move || {
         let (dir, pref) = {
@@ -496,6 +639,7 @@ pub async fn start_session(
             terminal_pref: pref,
             claude_home,
             hoku_fullscreen: false,
+            vscode_bridge: vscode_bridge_root(),
         };
         let id = db::new_id();
         // Recorded first: the session can be discovered as soon as it starts.
@@ -508,7 +652,7 @@ pub async fn start_session(
         let result = launch::start_claude_code(&dir, &id, &ctx).inspect_err(|_| {
             let _ = db::take_pending_launch(&dbh.lock().expect("db"), Provider::ClaudeCode, &id);
         })?;
-        bring_forward(&app, &result);
+        bring_forward(&app, &result, generation);
         Ok(result)
     })
     .await

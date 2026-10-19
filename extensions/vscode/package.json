@@ -1,0 +1,39 @@
+{
+  "name": "hoku-vscode",
+  "displayName": "Hoku",
+  "description": "Lets the Hoku macOS app bring the exact VS Code terminal of a Claude Code session to the front. Local only.",
+  "version": "0.1.0",
+  "publisher": "joao-afonso-p",
+  "private": true,
+  "license": "MIT",
+  "author": "João Afonso",
+  "homepage": "https://joao-afonso-p.github.io/hoku/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/joao-afonso-p/hoku",
+    "directory": "extensions/vscode"
+  },
+  "bugs": {
+    "url": "https://github.com/joao-afonso-p/hoku/issues"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onStartupFinished",
+    "onUri"
+  ],
+  "extensionKind": [
+    "ui"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    },
+    "virtualWorkspaces": true
+  }
+}

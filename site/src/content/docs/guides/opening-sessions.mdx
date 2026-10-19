@@ -12,7 +12,7 @@ For Claude Code there's a single button, **Go to terminal**. When you click it, 
 | The session is… | Hoku… |
 |---|---|
 | running in an **iTerm or Terminal** tab | switches to that tab, bringing its window to your current desktop if needed |
-| running in **VS Code**'s (or VS Code Insiders') integrated terminal | brings VS Code to the front. It can't pick the exact terminal tab, because VS Code has no way to do that from outside. |
+| running in **VS Code**'s (or VS Code Insiders') integrated terminal | with the optional [Hoku extension for VS Code](/hoku/guides/vscode-extension/), brings that exact window forward and shows the session's terminal. Without it, brings VS Code to the front and you pick the tab. See [VS Code](#vs-code). |
 | running as a **background session** (`claude --bg`) | switches to a tab already attached to it. Otherwise, if `claude agents` is open (in iTerm, Terminal or VS Code), it goes there so you can pick the session. Failing both, it runs `claude attach <id>` in a new tab. |
 | **not running** | runs `claude --resume <id>` in the session's folder, in a new tab of your frontmost iTerm window on this desktop |
 
@@ -22,6 +22,16 @@ It never starts a second copy of a session that's already running. Two copies of
 - **The first time**, macOS asks whether Hoku may control iTerm or Terminal. Click **Allow**. macOS asks again after each Hoku update (see [Install and update](/hoku/start/install/#update)).
 - **Hover the button** to see what will most likely happen, for example "Will switch to the terminal it's running in". The click re-checks live state, so the result can differ.
 - **Copy command** in the inspector copies `claude --resume <id>` if you'd rather run it yourself.
+
+### VS Code
+
+VS Code doesn't let other apps pick one of its windows or terminal tabs. The optional [Hoku extension for VS Code](/hoku/guides/vscode-extension/), bundled with Hoku, closes that gap: each VS Code window tells Hoku which terminals it has (process numbers only), and Go to terminal asks the right window to show the session's terminal and come forward.
+
+- Hoku says *Switched to this session's terminal in VS Code* only when that window confirms it. Otherwise it brings VS Code forward and says it couldn't select the window and terminal, so you pick it there.
+- The first time, VS Code asks *Allow 'Hoku' extension to open this URI?*. Choose **Open** and tick **Do not ask me again**.
+- Remote windows (SSH, containers, WSL) and sessions in the Claude Code extension's panel keep the old behaviour: VS Code comes forward and you pick the session. So does running two copies of VS Code at once. tmux inside VS Code is still a terminal Hoku can't switch to, and forks such as Cursor aren't recognized.
+
+Install it from the setup sheet Hoku offers, or from **Integrations**. See [VS Code extension](/hoku/guides/vscode-extension/).
 
 ### When Hoku can't switch there
 

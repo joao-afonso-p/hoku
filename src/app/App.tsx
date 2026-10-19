@@ -6,6 +6,7 @@ import { drawerWidth, ListDrawer, listHighlight } from "../features/activity/Lis
 import { CommandPalette } from "../features/command-palette/CommandPalette";
 import { Constellation } from "../features/constellation/Constellation";
 import { IntegrationCenter } from "../features/integrations/IntegrationCenter";
+import { VsCodeExtensionSheet } from "../features/integrations/VsCodeExtensionSheet";
 import { EmptyState } from "../features/onboarding/EmptyState";
 import { ProjectSheet } from "../features/projects/ProjectSheet";
 import { RecapsView } from "../features/recaps/RecapsView";
@@ -120,6 +121,7 @@ export function App() {
         {overlay?.kind === "settings" && <SettingsSheet />}
         {overlay?.kind === "scan" && <ScanSheet />}
         {overlay?.kind === "spaces-help" && <SpacesHelpSheet app={overlay.app} />}
+        {overlay?.kind === "vscode-extension" && <VsCodeExtensionSheet step={overlay.step} sessionId={overlay.sessionId} flavor={overlay.flavor} />}
         <Toasts />
       </main>
     </div>

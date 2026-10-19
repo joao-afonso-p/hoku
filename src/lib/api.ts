@@ -20,6 +20,9 @@ import type {
   ResumeDraft,
   ScanReport,
   Session,
+  VsCodeFlavor,
+  VsCodeSetupResult,
+  VsCodeStatus,
 } from "./types";
 
 /** Every backend error is a HubError; normalize anything else into one. */
@@ -98,6 +101,7 @@ export const api = {
   setLink: (from: string, to: string, linked: boolean) => call<void>("set_link", { from, to, linked }),
 
   openSession: (id: string) => call<OpenResult>("open_session", { id }),
+  vscodeSessionHost: (id: string) => call<VsCodeFlavor | null>("vscode_session_host", { id }),
   /** Claude Code in a new terminal tab, in `directory` or the project's root folder. */
   startSession: (projectId: string, directory: string | null) => call<OpenResult>("start_session", { projectId, directory }),
   /** The native folder chooser. `null` when cancelled. */
@@ -105,6 +109,12 @@ export const api = {
   copyText: (text: string) => call<void>("copy_text", { text }),
   spacesSwitchEnabled: () => call<boolean>("spaces_switch_enabled"),
   openSpacesSettings: () => call<void>("open_spaces_settings"),
+  /** The Hoku extension in each VS Code build installed on this Mac. */
+  vscodeExtensionStatus: () => call<VsCodeStatus[]>("vscode_extension_status"),
+  /** Install (or update) the extension bundled with Hoku, through that build's own CLI. */
+  installVscodeExtension: (flavor: VsCodeFlavor) => call<void>("install_vscode_extension", { flavor }),
+  /** Ask the running VS Code to let the extension answer, and wait up to a minute. */
+  vscodeSetupPing: (flavor: VsCodeFlavor) => call<VsCodeSetupResult>("vscode_setup_ping", { flavor }),
   revealPath: (path: string) => call<void>("reveal_path", { path }),
   openProviderApp: (app: "claude" | "codex") => call<void>("open_provider_app", { app }),
 

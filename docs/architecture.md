@@ -26,16 +26,23 @@ small typed IPC surface.
 │ recap.rs        recaps: bounded period query, outcomes, PNG  │
 │ providers/      claude_code · codex · claude_desktop (+text) │
 │ launch.rs       terminals (AppleScript), deep links, pbcopy  │
+│ vscode_bridge.rs VS Code extension bridge: match, focus, gc  │
 │ resume.rs       opt-in AI draft for Project Resume (CLI)     │
 │ integrations.rs installed apps/CLIs, sign-in status          │
 │ devtools.rs     debug builds only: snapshot/eval socket      │
 └──────────────────────────────────────────────────────────────┘
 ```
 
+Outside the app, `extensions/vscode/` is the optional Hoku VS Code extension (TypeScript, no
+runtime dependencies). It's packaged into Hoku.app as a VSIX and talks to `vscode_bridge.rs`
+only through files in Hoku's App Support folder and a `vscode://` link. See
+[vscode-extension.md](vscode-extension.md).
+
 ## Data
 
 The only database written is `~/Library/Application Support/com.hoku.app/hub.sqlite`
-(WAL). An index from the old identifier's folder (`com.aisessionhub.app`) is copied over once
+(WAL). Besides it, Hoku writes only the short-lived VS Code bridge files described under
+[Security](#security). An index from the old identifier's folder (`com.aisessionhub.app`) is copied over once
 on first launch; the old file is left as a backup. Migrations are an ordered list in `db.rs`, tracked with `PRAGMA user_version`.
 
 | Table | Purpose |
@@ -162,6 +169,20 @@ reload the snapshot. The dataset is hundreds of rows, so this stays simple and c
 - `launch.rs` validates ids (`^[A-Za-z0-9][A-Za-z0-9_-]{5,79}$`, so an id can't be a flag), requires existing absolute
   directories, shell-quotes paths and escapes AppleScript strings. `open` is restricted to
   `claude://`, `codex://`, `https://claude.ai/` and `https://chatgpt.com/`.
+- The optional VS Code extension (`extensions/vscode/`, see
+  [vscode-extension.md](vscode-extension.md)) is the one other place Hoku writes:
+  `~/Library/Application Support/com.hoku.app/vscode-bridge/` (`windows/`, `requests/`,
+  `replies/`; folders 0700, files 0600, atomic writes). The files carry only process numbers,
+  a VS Code window number, versions, timestamps and status words, never terminal names or
+  contents, file names, workspace paths or cwd. Requests and replies live a few seconds and
+  are deleted by Hoku; anything older than 60 s is garbage-collected; window records go when
+  the window closes. Nothing from the bridge is stored in `hub.sqlite`. There's no listener
+  or socket: Hoku triggers the extension by opening a
+  `vscode[-insiders]://joao-afonso-p.hoku-vscode/…` URL that it builds from validated digits
+  and hex and checks against a strict regex. Records are untrusted input (regular files
+  owned by the user, size-capped, schema-checked, PID-reuse guarded). Installing the
+  extension runs VS Code's own CLI with fixed arguments and the VSIX bundled in Hoku.app; no
+  VS Code setting is ever written.
 - Recaps are shared only by the user: the share card is copied to the pasteboard or saved as
   a new PNG in `~/Downloads` (never overwriting a file), and its text is copied with `pbcopy`.
   Card content is built from aggregates and the user's own words only. See

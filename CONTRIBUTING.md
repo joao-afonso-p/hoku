@@ -46,6 +46,7 @@ pnpm dev                      # frontend only, in a browser (no Rust backend, IP
 pnpm build                    # typecheck + production frontend build into dist/
 pnpm tauri build --no-bundle  # release build of the Rust app without creating Hoku.app
 pnpm install:local            # build and install /Applications/Hoku.app (see README)
+pnpm vscode:package           # build the VS Code extension into src-tauri/resources/vscode/hoku-vscode.vsix
 ```
 
 Debug builds start a localhost-only control socket (`src-tauri/src/devtools.rs`, port
@@ -75,6 +76,8 @@ src-tauri/src/            Rust: all I/O
   integrations.rs         installed apps/CLIs, sign-in status, capability table
   db.rs                   Hoku's own SQLite: schema, migrations, merge rules
   commands.rs             the IPC surface
+  vscode_bridge.rs        VS Code extension bridge: terminal matching, focus requests
+extensions/vscode/        the optional Hoku VS Code extension (TypeScript, bundled as a VSIX)
 docs/                     architecture, provider discovery, runtime state, layout
 ```
 
@@ -178,7 +181,10 @@ any of them won't be merged.
    provider's data. Open foreign SQLite databases with `SQLITE_OPEN_READ_ONLY` and
    `PRAGMA query_only` (see `CodexAdapter::open_ro` and its `never_writes_to_the_codex_db`
    test). Don't acquire the provider's lock files or run migrations on its databases. The
-   only database Hoku writes is its own `hub.sqlite`.
+   only database Hoku writes is its own `hub.sqlite`. Besides it, Hoku writes only
+   short-lived, private (0600 files, 0700 folders) VS Code bridge files in its own App
+   Support folder, `vscode-bridge/`. They must never contain workspace paths, terminal names
+   or terminal contents (see [docs/vscode-extension.md](docs/vscode-extension.md)).
 2. **Never read credentials or tokens.** Don't open files like `~/.codex/auth.json`,
    `~/.claude/sessions/*.key`, `~/.claude/daemon/auth`, or Claude Desktop's OAuth or config
    caches, even to read one "harmless" field. Account state comes only from a provider's
@@ -265,6 +271,12 @@ pnpm build
 (cd src-tauri && cargo fmt --check && cargo test)
 pnpm tauri build --debug --bundles app   # unsigned app build, same as CI
 ```
+
+`pnpm typecheck` and `pnpm test` also cover the VS Code extension in `extensions/vscode/`,
+and the app build packages it (`pnpm vscode:package` runs in `beforeBuildCommand`). Never
+test the extension against the VS Code you work in: use
+`code --user-data-dir <tmp> --extensions-dir <tmp>` (see
+[docs/vscode-extension.md](docs/vscode-extension.md#manual-testing)).
 
 There are also `#[ignore]`d manual probes. They're optional and not part of CI:
 

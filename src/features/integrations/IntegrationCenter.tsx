@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { closeOverlay, fail, loadIntegrations, reload, scan } from "../../app/actions";
+import { closeOverlay, fail, loadIntegrations, openOverlay, reload, scan } from "../../app/actions";
 import { useHub } from "../../app/store";
 import { api } from "../../lib/api";
 import { relativeTime } from "../../lib/time";
-import type { IntegrationCapability, ProviderAccount, ProviderGroup, RuntimeCapabilities, SupportLevel } from "../../lib/types";
+import type { IntegrationCapability, ProviderAccount, ProviderGroup, RuntimeCapabilities, SupportLevel, VsCodeStatus } from "../../lib/types";
 import { IconClose } from "../../components/Icons";
+import { statusLevel, summaryLine } from "./vscodeExtension";
 
 const STAR = "#f1ead8";
 
@@ -149,6 +150,7 @@ function ProviderSystem({ g }: { g: ProviderGroup }) {
             />
           ))}
           <StatusRow label="Indexed sessions" ok={indexed > 0 ? true : "partial"} value={String(indexed)} sub={last ? `Last scan ${relativeTime(last)}` : "Not scanned yet"} />
+          {g.id === "claude" && <VsCodeExtensionRow />}
         </dl>
 
         <div className="mt-3 grid gap-2.5">
@@ -208,6 +210,38 @@ function StatusRow({ label, ok, value, sub, mono }: { label: string; ok: boolean
       <dd className="min-w-0">
         <span className="text-ink">{value}</span>
         {sub && <span className={`block truncate text-[11px] text-ink-4 ${mono ? "font-mono" : ""}`}>{sub}</span>}
+      </dd>
+    </div>
+  );
+}
+
+/** The Hoku extension for VS Code: precise "Go to terminal" for Claude Code in VS Code terminals. */
+function VsCodeExtensionRow() {
+  const [statuses, setStatuses] = useState<VsCodeStatus[] | null>(null);
+  useEffect(() => {
+    void api
+      .vscodeExtensionStatus()
+      .then(setStatuses)
+      .catch(() => setStatuses([]));
+  }, []);
+  const levels = (statuses ?? []).map(statusLevel);
+  const ok = levels.includes("connected") ? true : levels.includes("installed") ? "partial" : false;
+  return (
+    <div className="grid grid-cols-[150px_1fr] items-baseline gap-3 py-1">
+      <dt className="flex items-center gap-2 text-ink-3">
+        <span className="h-1.5 w-1.5 rounded-full" style={{ background: ok === true ? STAR : "transparent", border: `1px solid ${statusColor(ok)}` }} />
+        VS Code extension
+      </dt>
+      <dd className="flex min-w-0 items-baseline justify-between gap-3">
+        <span className="min-w-0">
+          <span className="text-ink">{statuses === null ? "Checking…" : summaryLine(statuses)}</span>
+          <span className="block truncate text-[11px] text-ink-4">Selects the exact window and terminal for Claude Code sessions</span>
+        </span>
+        {statuses !== null && statuses.length > 0 && (
+          <button className="btn h-6 shrink-0 px-2 text-[11.5px]" onClick={() => openOverlay({ kind: "vscode-extension" })}>
+            {ok === true ? "Manage" : "Set up"}
+          </button>
+        )}
       </dd>
     </div>
   );

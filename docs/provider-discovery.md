@@ -89,10 +89,19 @@ directly is faster and needs no subprocess.
      pid=,ppid=,comm=` snapshot). iTerm2/Terminal: focus the existing tab by TTY. VS Code
      (`com.microsoft.VSCode`) or VS Code Insiders (`com.microsoft.VSCodeInsiders`),
      recognised by the app bundle path or its `Code Helper` processes (the integrated
-     terminal's pty host, or the extension host for extension-launched sessions): activate
-     the app. VS Code exposes no way to select a terminal tab from outside, so the exact tab
-     isn't selected. Forks (Cursor, VSCodium, Windsurf) and other Electron apps don't match.
-     Anything else (Warp, tmux): explain, never start a second copy.
+     terminal's pty host, or the extension host for extension-launched sessions). VS Code
+     exposes no way to select a window or terminal tab from outside, so precise navigation
+     goes through the optional Hoku VS Code extension (`joao-afonso-p.hoku-vscode`, bundled in
+     Hoku.app): Hoku finds the terminal's root process (the child of the pty host), matches
+     it against the terminal pids each window reports in
+     `~/Library/Application Support/com.hoku.app/vscode-bridge/windows/`, and asks that
+     window, through a `vscode://` link opened with `open -g`, to show the terminal and
+     confirm focus. Precise success is claimed only on a confirmed reply for that click;
+     otherwise the app is activated as before, with an honest message. Claude Code
+     extension-panel sessions, remote windows, two running instances of one flavour and
+     unmatched records keep the plain activation. See [vscode-extension.md](vscode-extension.md).
+     Forks (Cursor, VSCodium, Windsurf) and other Electron apps don't match. Anything else
+     (Warp, tmux): explain, never start a second copy.
   3. Anything else: `cd <cwd> && claude --resume <id>` in a new terminal window.
 - Runtime: the registry's `status` / `waitingFor` / `statusUpdatedAt` plus the transcript
   tail. See [runtime-state.md](runtime-state.md). Verified: a background session
@@ -230,11 +239,18 @@ It is not used; Claude Code sessions open in a terminal instead.
 - Claude Desktop chat titles: server-side only. Titles come from the user on manual add.
 - Focusing an interactive Claude Code terminal depends on the user granting Automation
   permission to Hoku for iTerm2/Terminal.
-- VS Code: only the app is activated. Selecting the right window or integrated-terminal tab
-  would need Accessibility access or reading another process's environment, which Hoku
-  doesn't do. With macOS's "switch to a Space with open windows" setting off, a VS Code
-  window on another desktop can't be moved here (no scriptable window list), so Hoku shows
-  the Spaces hint instead.
+- VS Code: without the Hoku VS Code extension only the app is activated. Selecting the right
+  window or integrated-terminal tab from outside would need Accessibility access or reading
+  another process's environment, which Hoku doesn't do; the extension does it from inside
+  VS Code instead ([vscode-extension.md](vscode-extension.md)). Still open: remote windows
+  (SSH, containers, WSL, Codespaces) publish no terminal pids; Claude Code extension-panel
+  sessions have no terminal and make no window-level claim; with two main processes of one
+  flavour (a custom `--user-data-dir`) LaunchServices can't target an instance, so Hoku
+  doesn't guess; auxiliary (floating) terminal windows are unverified; the extension and the
+  URI-trust choice are per VS Code profile; `windowId` routing is VS Code behaviour, not a
+  documented contract. With macOS's "switch to a Space with open windows" setting off, a
+  VS Code window on another desktop can't be moved here (no scriptable window list), so Hoku
+  shows the Spaces hint instead.
 
 ## 7. Security implications
 
