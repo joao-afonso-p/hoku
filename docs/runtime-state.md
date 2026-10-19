@@ -60,7 +60,7 @@ Visual priority: Needs You → Error → Working → Ready → Idle → Offline 
 | Provider | Signal | Live state |
 |---|---|---|
 | **Claude Code** | Its own session registry `~/.claude/sessions/<pid>.json`. Claude Code writes `status` (`busy` · `waiting` · `idle` · `shell`) and, while waiting, `waitingFor` (`permission prompt`, `input needed`, `dialog open`, `sandbox request`, `worker request`, `goal proposal`) on every change, with `statusUpdatedAt`. The pid is checked with `kill(pid, 0)`. The last 256 KB of the transcript adds the pending tools, tracked by `tool_use` id so a parallel call that finishes doesn't hide one still waiting (`Running Bash`, `AskUserQuestion` → "Asked a question" + the question, `ExitPlanMode` → "Plan needs approval"), and API errors (`authentication_failed` → Authentication required, actionable; `rate_limit` → Usage limit reached; `server_error` → Request failed). | **Full**, high confidence |
-| **Codex Desktop** | Rollout tail (`sessions/…/rollout-*.jsonl`, last 256 KB) for threads that are held open (`thread-writer-locks/<id>.lock`) or were updated in the last 12 h. `task_started` → working · `task_complete` → ready · `turn_aborted` → idle · `error` → error. Every call without an output is tracked by `call_id` (see [Codex approvals](#codex-approvals)): a pending `request_user_input` → **Asked a question**, a pending `request_permissions` → **Permission requested**, a pending call Codex would ask about, still unanswered after 4 s → **Waiting for approval** (its `justification` is the detail). Codex app not running → offline (high). | **Partial**, medium confidence |
+| **Codex Desktop** | Rollout tail (`sessions/…/rollout-*.jsonl`, last 256 KB) for threads that are held open (`thread-writer-locks/<id>.lock`) or were updated in the last 12 h. `task_started` → working · `task_complete` → ready (unless it carries an `error`/`codex_error_info`) · `turn_aborted` → idle · `error` → error. Every call without an output is tracked by `call_id` (see [Codex approvals](#codex-approvals)): a pending `request_user_input` → **Asked a question**, a pending `request_permissions` → **Permission requested**, a pending call Codex would ask about, still unanswered after 4 s → **Waiting for approval** (its `justification` is the detail). Failed turns are classified (see [Codex approvals](#codex-approvals)): `Authentication required` · `Billing needs attention` · `Usage limit reached` go to Needs You, a generic `Request failed` doesn't. Codex app not running → offline (high). | **Partial**, medium confidence |
 | **Claude Desktop · Cowork** | Only whether Claude Desktop runs and when a session's metadata file last changed. Changed < 90 s ago → working (low). < 30 min → unknown. Otherwise offline (low). It never claims Needs You. | **Limited**, low confidence |
 | **Claude Desktop · chats** | Nothing local. Always unknown. | **None** |
 
@@ -77,20 +77,38 @@ Code build doesn't publish `waiting`. Any other pending tool on a busy session s
 
 Codex doesn't write approval requests (`exec_approval_request`,
 `apply_patch_approval_request`, `request_permissions`, `request_user_input` events) to the
-rollout. The only trace is a call that has no output yet, so Hoku infers the request from the
-call:
+rollout. Hoku infers them from calls that have no output yet. An asynchronous question is
+different: `request_user_input_async` immediately returns `{"accepted":true}` when Codex
+displays the card. That acknowledgement is not the user's answer, so Hoku keeps the question
+pending until a user message or the turn ends.
 
 | Pending call | State | Confidence |
 |---|---|---|
 | `request_user_input` | Needs You · Asked a question (at once) | medium |
+| `request_user_input_async`, including after its immediate accepted acknowledgement while the turn remains active | Needs You · Asked a question | low |
 | `request_permissions` | Needs You · Permission requested (at once) | medium |
 | `sandbox_permissions: "require_escalated"` or `"with_additional_permissions"` (older builds: `with_escalated_permissions: true`), as JSON arguments or in code-mode JavaScript, unanswered for 4 s on a quiet rollout | Needs You · Waiting for approval | medium |
-| Any command (`exec_command`, `shell`, `shell_command`, code-mode `exec`) under the `untrusted` policy, unanswered for 4 s | Needs You · Waiting for approval | low |
+| Any command (`exec_command`, `shell`, `shell_command`, code-mode `exec`) or an `apply_patch` under the `untrusted` policy, unanswered for 4 s | Needs You · Waiting for approval | low |
+| An escalated `apply_patch` (`sandbox_permissions: "require_escalated"`), like an escalated command | Needs You · Waiting for approval | medium |
 | A code-mode `exec` cell that yielded ("Script running with cell ID …") carrying one of the above, while the model only polls it with `wait` | Needs You · Waiting for approval | low |
 | Anything else | Working · Running `<tool>` | medium |
 
 Nothing prompts under the `never` policy. The policy comes from the rollout's latest
 `turn_context.approval_policy`, falling back to the thread index's `approval_mode`.
+
+A plain `untrusted` or escalated `apply_patch` carries no detail — the patch body, diff and
+file contents never reach the index.
+
+An async question card can disappear when Codex finishes the turn. Hoku clears the alert on
+`task_complete` or `turn_aborted`; it does not claim that the card remains answerable after
+Codex closes it.
+
+A failed turn (an `error` event, or a `task_complete`/`turn_complete` carrying an `error` or
+`codex_error_info`) is classified by a text heuristic over the message and the structured
+`codex_error_info`: **Authentication required**, **Billing needs attention** and **Usage limit
+reached** (`code == usage_limit_exceeded`) are actionable and go to Needs You; anything else is
+a generic **Request failed** — Error only, not Needs You. The next `function_call` or a clean
+`task_complete` clears the failure, so a recovered turn doesn't linger in Error.
 
 Codex runs one response's calls in parallel and writes their outputs in call order once they
 finish. An escalated call waiting for approval therefore holds back the outputs of every call
@@ -98,10 +116,13 @@ after it. **This caused the "Working while waiting for approval" bug:** only the
 pending call was kept, so an escalated call followed by a plain one (`git status` next to
 `gh pr create`) read as "Running exec_command". Every unanswered call now counts.
 
-Known gaps, where Codex's decision isn't visible in the rollout: an `apply_patch` outside the
-writable roots, MCP tool approvals, and commands Codex itself classes as dangerous. These
-still show as working. An approved escalated command that runs for a long time stays
-"Waiting for approval" until its output lands, since approval and execution look the same.
+Known gaps, where Codex's decision isn't visible in the rollout: a default `on-request`
+`apply_patch` writing **outside** the workspace prompts in the UI but leaves no escalation in
+the rollout, so it stays working (not claimed); likewise MCP tool approvals and commands Codex
+itself classes as dangerous. An approved escalated command that runs for a long time stays
+"Waiting for approval" until its output lands, since approval and execution look the same. Error
+classification is a wording heuristic over the failure message, so an unusual phrasing may read
+as the generic "Request failed".
 
 ### Why no Claude Code hooks
 
@@ -197,7 +218,10 @@ Hoku, the target is kept until the UI has loaded.
 **Permission.** macOS asks the first time notifications (or the badge) are turned on in
 Settings, never at launch. If it's denied, or alerts or badges are turned off for Hoku in
 System Settings, Settings says so and links to Hoku's Notifications pane. Whether macOS shows
-the Dock count can depend on the "Badge application icon" setting there.
+the Dock count can depend on the "Badge application icon" setting there. If Hoku's preference
+is already on but this app build has not requested macOS permission, Settings offers an
+**Enable notifications** button. An authorized app with alert style set to **None** also gets
+a warning: macOS will not show a desktop banner in that style.
 
 **Limits.** Notifications are local: Hoku posts them itself, so none arrive while Hoku isn't
 running, and nothing is pushed from anywhere. Unbundled builds (`pnpm tauri dev`) can't use the

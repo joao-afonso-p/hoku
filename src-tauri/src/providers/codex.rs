@@ -115,7 +115,10 @@ pub enum Turn {
     Started,
     Complete,
     Aborted,
-    Failed(String),
+    Failed {
+        message: String,
+        code: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -143,6 +146,9 @@ pub struct RolloutTail {
     /// writes their outputs in call order once they finish, so a call waiting for approval holds
     /// back the outputs of every call after it: all of them stay pending together.
     pub pending: Vec<PendingCall>,
+    /// Async question calls return an immediate `{"accepted":true}` acknowledgement, not the
+    /// user's answer. Keep them separate from unanswered tool calls until a reply or turn end.
+    pub async_questions: Vec<PendingCall>,
     /// Code-mode `exec` calls that yielded ("Script running with cell ID …") and are still
     /// running, keyed by cell id. A nested command can be waiting for approval behind them
     /// while the model polls with `wait`.
@@ -199,6 +205,52 @@ fn running_cell(output: &str) -> Option<String> {
         .map(|c| c[1].to_string())
 }
 
+/// Does this `codex_error_info` value read as a failure, rather than a benign tag like
+/// "none"/"ok"? Used to avoid treating a healthy complete as failed.
+fn looks_like_error(s: &str) -> bool {
+    let s = s.to_lowercase();
+    [
+        "exceeded",
+        "error",
+        "limit",
+        "insufficient",
+        "invalid",
+        "failed",
+    ]
+    .iter()
+    .any(|n| s.contains(n))
+}
+
+/// Pull a failure out of a *completed-turn* payload: a non-empty `error` (string, or object with
+/// a `message`) or a `codex_error_info` that looks like an error. Returns `(message, code)`, the
+/// code being the structured `codex_error_info` when present. An explicit `error` always fails
+/// the turn; a bare `codex_error_info` only counts when it reads as an error, so a benign tag
+/// ("none"/"ok") on a healthy `task_complete` stays Ready. (The `error` event itself is always a
+/// failure, and doesn't go through here.)
+fn payload_error(p: &Value) -> Option<(String, Option<String>)> {
+    let code = p
+        .get("codex_error_info")
+        .and_then(|c| c.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let err_text = match p.get("error") {
+        Some(Value::String(s)) => Some(s.trim().to_string()).filter(|s| !s.is_empty()),
+        Some(Value::Object(o)) => o
+            .get("message")
+            .and_then(|m| m.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+        _ => None,
+    };
+    if let Some(message) = err_text {
+        return Some((message, code));
+    }
+    let code = code.filter(|c| looks_like_error(c))?;
+    Some((code.clone(), Some(code)))
+}
+
 /// `approval_policy` is a kebab-case string, or `{"granular": {…}}`.
 fn policy_name(v: &Value) -> Option<String> {
     match v {
@@ -206,6 +258,32 @@ fn policy_name(v: &Value) -> Option<String> {
         Value::Object(o) => o.keys().next().cloned(),
         _ => None,
     }
+}
+
+fn question_prompt(args: &str) -> Option<String> {
+    serde_json::from_str::<Value>(args)
+        .ok()
+        .and_then(|v| {
+            v.get("questions")?
+                .as_array()?
+                .first()?
+                .get("title")?
+                .as_str()
+                .map(str::to_string)
+        })
+        .or_else(|| string_field(args, "question"))
+}
+
+fn async_question_accepted(output: &Value) -> bool {
+    let parsed = match output {
+        Value::String(s) => serde_json::from_str::<Value>(s).ok(),
+        other => Some(other.clone()),
+    };
+    parsed
+        .as_ref()
+        .and_then(|v| v.get("accepted"))
+        .and_then(Value::as_bool)
+        == Some(true)
 }
 
 pub fn parse_rollout_tail(raw: &str) -> RolloutTail {
@@ -235,31 +313,51 @@ pub fn parse_rollout_tail(raw: &str) -> RolloutTail {
                 t.turn = Turn::Started;
                 t.turn_at = at;
                 t.pending.clear();
+                t.async_questions.clear();
                 t.running_cells.clear();
             }
             ("event_msg", "task_complete" | "turn_complete") => {
-                t.turn = Turn::Complete;
                 t.turn_at = at;
-                t.pending.clear();
-                t.running_cells.clear();
+                // A completed turn can still carry a failure (an error object or
+                // `codex_error_info`); treat that as a failed turn, not Ready.
+                if let Some((message, code)) = payload_error(p) {
+                    t.turn = Turn::Failed { message, code };
+                } else {
+                    t.turn = Turn::Complete;
+                    t.pending.clear();
+                    t.async_questions.clear();
+                    t.running_cells.clear();
+                }
             }
             ("event_msg", "turn_aborted") => {
                 t.turn = Turn::Aborted;
                 t.turn_at = at;
                 t.pending.clear();
+                t.async_questions.clear();
                 t.running_cells.clear();
             }
+            ("event_msg", "user_message") => {
+                // A reply to an async card is delivered as a user message, not as another
+                // output for the already-acknowledged tool call.
+                t.async_questions.clear();
+            }
             ("event_msg", "error") => {
-                t.turn = Turn::Failed(
-                    p.get("message")
-                        .and_then(|m| m.as_str())
-                        .unwrap_or("Unknown error")
-                        .to_string(),
-                );
+                let code = p
+                    .get("codex_error_info")
+                    .and_then(|c| c.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string);
+                let message = p
+                    .get("message")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("Unknown error")
+                    .to_string();
+                t.turn = Turn::Failed { message, code };
                 t.turn_at = at;
             }
             ("response_item", "function_call" | "custom_tool_call") => {
-                if matches!(t.turn, Turn::Failed(_)) {
+                if matches!(t.turn, Turn::Failed { .. }) {
                     t.turn = Turn::Started; // the turn carried on after a retried error
                 }
                 let args = p
@@ -274,7 +372,7 @@ pub fn parse_rollout_tail(raw: &str) -> RolloutTail {
                     .to_string();
                 let escalated = asks_to_escalate(args);
                 let prompt = match name.as_str() {
-                    "request_user_input" => string_field(args, "question"),
+                    "request_user_input" | "request_user_input_async" => question_prompt(args),
                     "request_permissions" => string_field(args, "reason"),
                     _ if escalated => string_field(args, "justification"),
                     _ => None,
@@ -302,6 +400,13 @@ pub fn parse_rollout_tail(raw: &str) -> RolloutTail {
                     continue;
                 };
                 let call = t.pending.remove(i);
+                if call.name == "request_user_input_async"
+                    && p.get("output").is_some_and(async_question_accepted)
+                {
+                    t.async_questions.retain(|c| c.call_id != call.call_id);
+                    t.async_questions.push(call);
+                    continue;
+                }
                 let still_running = p
                     .get("output")
                     .map(|o| match o {
@@ -337,16 +442,56 @@ fn iso_ms(iso: Option<&str>) -> Option<i64> {
 
 /// Tools that run shell commands, directly or from code-mode JavaScript.
 const RUNS_COMMANDS: [&str; 4] = ["exec_command", "shell", "shell_command", "exec"];
+/// Tools that edit files in the workspace.
+const APPLIES_EDITS: [&str; 1] = ["apply_patch"];
 
 /// Would Codex ask before running this call under `policy`, and how sure is that?
-/// Escalations always prompt (except under `never`). Under `untrusted` every command without an
-/// allow rule prompts, even a plain one: likely, not certain (known-safe commands run freely).
+/// Escalations always prompt (except under `never`). Under `untrusted` every command or patch
+/// without an allow rule prompts, even a plain one: likely, not certain (known-safe commands
+/// run freely).
 fn approval_confidence(c: &PendingCall, policy: Option<&str>) -> Option<Confidence> {
     match policy {
         Some("never") => None,
         _ if c.escalated => Some(Confidence::Medium),
-        Some("untrusted") if RUNS_COMMANDS.contains(&c.name.as_str()) => Some(Confidence::Low),
+        Some("untrusted")
+            if RUNS_COMMANDS.contains(&c.name.as_str())
+                || APPLIES_EDITS.contains(&c.name.as_str()) =>
+        {
+            Some(Confidence::Low)
+        }
         _ => None,
+    }
+}
+
+/// Classify a Codex failure message (plus the optional structured `codex_error_info`) into a
+/// short reason and whether a human must act. Heuristic text match — medium confidence.
+fn classify_error(msg: &str, code: Option<&str>) -> (&'static str, bool) {
+    let m = msg.to_lowercase();
+    let has = |needles: &[&str]| needles.iter().any(|n| m.contains(n));
+    if code == Some("usage_limit_exceeded")
+        || has(&[
+            "usage limit",
+            "usage_limit",
+            "usage_limit_exceeded",
+            "out of tokens",
+            "insufficient_quota",
+        ])
+    {
+        ("Usage limit reached", true)
+    } else if has(&[
+        "unauthorized",
+        "authentication",
+        "invalid api key",
+        "api key",
+        "not logged in",
+        "sign in",
+        "run /login",
+    ]) {
+        ("Authentication required", true)
+    } else if has(&["billing", "payment", "past due"]) {
+        ("Billing needs attention", true)
+    } else {
+        ("Request failed", false)
     }
 }
 
@@ -392,6 +537,14 @@ pub fn observe_thread(
             if let Some(c) = t.pending.iter().find(|c| c.name == "request_user_input") {
                 return asks(c, "Asked a question", Confidence::Medium);
             }
+            if let Some(c) = t
+                .pending
+                .iter()
+                .chain(t.async_questions.iter())
+                .find(|c| c.name == "request_user_input_async")
+            {
+                return asks(c, "Asked a question", Confidence::Low);
+            }
             if let Some(c) = t.pending.iter().find(|c| c.name == "request_permissions") {
                 return asks(c, "Permission requested", Confidence::Medium);
             }
@@ -429,10 +582,14 @@ pub fn observe_thread(
                 .since(t.turn_at.clone())
                 .activity(t.last_at.clone())
         }
-        Turn::Failed(msg) => Observation::new(RuntimeState::Error, Confidence::Medium, SOURCE)
-            .reason("Turn failed")
-            .detail(Some(msg.clone()))
-            .since(t.turn_at.clone()),
+        Turn::Failed { message, code } => {
+            let (reason, action) = classify_error(message, code.as_deref());
+            Observation::new(RuntimeState::Error, Confidence::Medium, SOURCE)
+                .reason(reason)
+                .detail(Some(message.clone()))
+                .action(action)
+                .since(t.turn_at.clone())
+        }
         _ if !locked => offline(),
         Turn::Complete => Observation::new(RuntimeState::Ready, Confidence::Medium, SOURCE)
             .reason("Finished its turn")
@@ -786,7 +943,7 @@ impl SessionAdapter for CodexAdapter {
             needs_input: "partial",
             ready: "full",
             error: "partial",
-            detail: "Inferred from the thread's rollout and writer locks. Approvals are detected from escalated commands, permission requests and questions still pending",
+            detail: "Inferred from the thread's rollout and writer locks. Approvals are detected from escalated commands, permission requests, questions and untrusted commands or patches still pending; failures are classified, with auth, billing and usage-limit errors routed to Needs You",
         }
     }
 }
@@ -932,9 +1089,14 @@ mod tests {
             );
         let o = observe_thread(Some(&parse_rollout_tail(&failed)), true, None, now());
         assert_eq!(
-            (o.state, o.detail.as_deref()),
-            (RuntimeState::Error, Some("stream disconnected"))
+            (o.state, o.reason.as_deref(), o.detail.as_deref()),
+            (
+                RuntimeState::Error,
+                Some("Request failed"),
+                Some("stream disconnected")
+            )
         );
+        assert!(!o.action_required, "a transient error isn't Needs You");
     }
 
     #[test]
@@ -1009,6 +1171,62 @@ mod tests {
                 Some("Asked a question"),
                 Some("Which test framework?")
             )
+        );
+    }
+
+    #[test]
+    fn async_question_ack_is_not_an_answer() {
+        let args = json!({"questions":[{"title":"Which name?","options":["Summary","Overview"]}]})
+            .to_string();
+        let asked = started("2026-09-24T11:58:00.000Z")
+            + &call(
+                "2026-09-24T11:58:01.000Z",
+                "q1",
+                "request_user_input_async",
+                &args,
+            );
+        let pending = observe(&asked, Some("on-request"));
+        assert_eq!(
+            (
+                pending.state,
+                pending.reason.as_deref(),
+                pending.detail.as_deref()
+            ),
+            (
+                RuntimeState::NeedsInput,
+                Some("Asked a question"),
+                Some("Which name?")
+            )
+        );
+
+        // Codex acknowledges displaying the card immediately. The human has not replied.
+        let acknowledged =
+            asked + &output("2026-09-24T11:58:02.000Z", "q1", r#"{"accepted":true}"#);
+        assert_eq!(
+            observe(&acknowledged, Some("on-request")).state,
+            RuntimeState::NeedsInput
+        );
+
+        // The answer comes back as a new user message. A completed turn also dismisses the card.
+        let answered = acknowledged.clone()
+            + &line(
+                "2026-09-24T11:58:10.000Z",
+                "event_msg",
+                json!({"type":"user_message","message":"Summary"}),
+            );
+        assert_eq!(
+            observe(&answered, Some("on-request")).state,
+            RuntimeState::Working
+        );
+        let completed = acknowledged
+            + &line(
+                "2026-09-24T11:58:10.000Z",
+                "event_msg",
+                json!({"type":"task_complete"}),
+            );
+        assert_eq!(
+            observe(&completed, Some("on-request")).state,
+            RuntimeState::Ready
         );
     }
 
@@ -1312,6 +1530,191 @@ mod tests {
         assert_eq!(
             observe(&other, Some("on-request")).state,
             RuntimeState::Working
+        );
+    }
+
+    #[test]
+    fn untrusted_apply_patch_waits_without_leaking_the_patch() {
+        let patch = r#"{"input":"*** Begin Patch\n*** Update File: src/secret.rs\n+const KEY = \"xyz\";\n*** End Patch"}"#;
+        let body = started("2026-09-24T11:58:00.000Z")
+            + &call("2026-09-24T11:58:01.000Z", "a1", "apply_patch", patch);
+        let o = observe(&body, Some("untrusted"));
+        assert_eq!(
+            (o.state, o.confidence, o.reason.as_deref()),
+            (
+                RuntimeState::NeedsInput,
+                Confidence::Low,
+                Some("Waiting for approval")
+            )
+        );
+        assert_eq!(o.detail, None, "the patch body must never leak");
+        // Under on-request a plain apply_patch is just work, not a claimed approval.
+        assert_eq!(
+            observe(&body, Some("on-request")).state,
+            RuntimeState::Working
+        );
+    }
+
+    #[test]
+    fn escalated_apply_patch_is_an_approval_with_justification() {
+        let args = r#"{"input":"*** Begin Patch\n*** End Patch","sandbox_permissions":"require_escalated","justification":"Allow writing outside the workspace?"}"#;
+        let raw = started("2026-09-24T11:58:00.000Z")
+            + &call("2026-09-24T11:58:01.000Z", "p1", "apply_patch", args);
+        let o = observe(&raw, Some("on-request"));
+        assert_eq!(
+            (o.state, o.reason.as_deref(), o.detail.as_deref()),
+            (
+                RuntimeState::NeedsInput,
+                Some("Waiting for approval"),
+                Some("Allow writing outside the workspace?")
+            )
+        );
+    }
+
+    #[test]
+    fn auth_error_is_needs_you() {
+        let raw = started("2026-09-24T11:59:50.000Z")
+            + &line(
+                "2026-09-24T11:59:55.000Z",
+                "event_msg",
+                json!({"type":"error","message":"401 Unauthorized - please run /login"}),
+            );
+        let o = observe(&raw, None);
+        assert_eq!(
+            (o.state, o.reason.as_deref(), o.action_required),
+            (RuntimeState::Error, Some("Authentication required"), true)
+        );
+    }
+
+    #[test]
+    fn usage_limit_is_needs_you_in_every_shape() {
+        // From the message text.
+        let by_msg = started("2026-09-24T11:59:50.000Z")
+            + &line(
+                "2026-09-24T11:59:55.000Z",
+                "event_msg",
+                json!({"type":"error","message":"You've hit your usage limit"}),
+            );
+        let o = observe(&by_msg, None);
+        assert_eq!(
+            (o.state, o.reason.as_deref(), o.action_required),
+            (RuntimeState::Error, Some("Usage limit reached"), true)
+        );
+        // From the structured error code, even with an unhelpful message.
+        let by_code = started("2026-09-24T11:59:50.000Z")
+            + &line(
+                "2026-09-24T11:59:55.000Z",
+                "event_msg",
+                json!({"type":"error","message":"Request failed","codex_error_info":"usage_limit_exceeded"}),
+            );
+        assert_eq!(
+            observe(&by_code, None).reason.as_deref(),
+            Some("Usage limit reached")
+        );
+        // From an error-bearing task_complete: Error, never Ready.
+        let complete = started("2026-09-24T11:59:50.000Z")
+            + &line(
+                "2026-09-24T11:59:55.000Z",
+                "event_msg",
+                json!({"type":"task_complete","codex_error_info":"usage_limit_exceeded"}),
+            );
+        let o = observe(&complete, None);
+        assert_eq!(
+            (o.state, o.reason.as_deref(), o.action_required),
+            (RuntimeState::Error, Some("Usage limit reached"), true)
+        );
+        assert_ne!(o.state, RuntimeState::Ready);
+    }
+
+    #[test]
+    fn transient_error_is_not_needs_you_and_a_clean_complete_is_ready() {
+        let err = started("2026-09-24T11:59:50.000Z")
+            + &line(
+                "2026-09-24T11:59:55.000Z",
+                "event_msg",
+                json!({"type":"error","message":"stream disconnected"}),
+            );
+        let o = observe(&err, None);
+        assert_eq!(
+            (o.state, o.reason.as_deref(), o.action_required),
+            (RuntimeState::Error, Some("Request failed"), false)
+        );
+        // A plain task_complete carries no error and still reads Ready.
+        let done = started("2026-09-24T11:59:50.000Z")
+            + &line(
+                "2026-09-24T11:59:55.000Z",
+                "event_msg",
+                json!({"type":"task_complete"}),
+            );
+        assert_eq!(observe(&done, None).state, RuntimeState::Ready);
+    }
+
+    #[test]
+    fn lookalike_errors_do_not_false_route_to_needs_you() {
+        // Message text that merely resembles auth/usage keywords must stay a generic failure.
+        for msg in [
+            "Disk quota exceeded",          // "quota"/"exceeded" ≠ usage limit
+            "stream closed after 14015 ms", // contains "401", but not auth
+            "GET https://api.example.com/login timed out", // URL "login", not /login auth
+        ] {
+            let raw = started("2026-09-24T11:59:50.000Z")
+                + &line(
+                    "2026-09-24T11:59:55.000Z",
+                    "event_msg",
+                    json!({"type":"error","message":msg}),
+                );
+            let o = observe(&raw, None);
+            assert_eq!(
+                (o.state, o.reason.as_deref(), o.action_required),
+                (RuntimeState::Error, Some("Request failed"), false),
+                "{msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_benign_codex_error_info_on_complete_is_ready() {
+        for tag in ["none", "ok"] {
+            let raw = started("2026-09-24T11:59:50.000Z")
+                + &line(
+                    "2026-09-24T11:59:55.000Z",
+                    "event_msg",
+                    json!({"type":"task_complete","codex_error_info":tag}),
+                );
+            assert_eq!(observe(&raw, None).state, RuntimeState::Ready, "{tag}");
+        }
+    }
+
+    #[test]
+    fn a_turn_recovers_from_an_error() {
+        let after_error = started("2026-09-24T11:58:00.000Z")
+            + &line(
+                "2026-09-24T11:58:05.000Z",
+                "event_msg",
+                json!({"type":"error","message":"stream disconnected"}),
+            );
+        // The model retried: a fresh call means work resumed, no stale Needs You or Error.
+        let resumed = after_error.clone()
+            + &call(
+                "2026-09-24T11:58:10.000Z",
+                "c1",
+                "exec_command",
+                r#"{"cmd":"ls"}"#,
+            );
+        assert_eq!(
+            observe(&resumed, Some("on-request")).state,
+            RuntimeState::Working
+        );
+        // Or the turn finished cleanly.
+        let finished = after_error
+            + &line(
+                "2026-09-24T11:58:20.000Z",
+                "event_msg",
+                json!({"type":"task_complete"}),
+            );
+        assert_eq!(
+            observe(&finished, Some("on-request")).state,
+            RuntimeState::Ready
         );
     }
 
