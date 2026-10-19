@@ -146,6 +146,9 @@ pub struct RolloutTail {
     /// writes their outputs in call order once they finish, so a call waiting for approval holds
     /// back the outputs of every call after it: all of them stay pending together.
     pub pending: Vec<PendingCall>,
+    /// Async question calls return an immediate `{"accepted":true}` acknowledgement, not the
+    /// user's answer. Keep them separate from unanswered tool calls until a reply or turn end.
+    pub async_questions: Vec<PendingCall>,
     /// Code-mode `exec` calls that yielded ("Script running with cell ID …") and are still
     /// running, keyed by cell id. A nested command can be waiting for approval behind them
     /// while the model polls with `wait`.
@@ -257,6 +260,32 @@ fn policy_name(v: &Value) -> Option<String> {
     }
 }
 
+fn question_prompt(args: &str) -> Option<String> {
+    serde_json::from_str::<Value>(args)
+        .ok()
+        .and_then(|v| {
+            v.get("questions")?
+                .as_array()?
+                .first()?
+                .get("title")?
+                .as_str()
+                .map(str::to_string)
+        })
+        .or_else(|| string_field(args, "question"))
+}
+
+fn async_question_accepted(output: &Value) -> bool {
+    let parsed = match output {
+        Value::String(s) => serde_json::from_str::<Value>(s).ok(),
+        other => Some(other.clone()),
+    };
+    parsed
+        .as_ref()
+        .and_then(|v| v.get("accepted"))
+        .and_then(Value::as_bool)
+        == Some(true)
+}
+
 pub fn parse_rollout_tail(raw: &str) -> RolloutTail {
     let mut t = RolloutTail::default();
     for line in raw.lines() {
@@ -284,6 +313,7 @@ pub fn parse_rollout_tail(raw: &str) -> RolloutTail {
                 t.turn = Turn::Started;
                 t.turn_at = at;
                 t.pending.clear();
+                t.async_questions.clear();
                 t.running_cells.clear();
             }
             ("event_msg", "task_complete" | "turn_complete") => {
@@ -295,6 +325,7 @@ pub fn parse_rollout_tail(raw: &str) -> RolloutTail {
                 } else {
                     t.turn = Turn::Complete;
                     t.pending.clear();
+                    t.async_questions.clear();
                     t.running_cells.clear();
                 }
             }
@@ -302,7 +333,13 @@ pub fn parse_rollout_tail(raw: &str) -> RolloutTail {
                 t.turn = Turn::Aborted;
                 t.turn_at = at;
                 t.pending.clear();
+                t.async_questions.clear();
                 t.running_cells.clear();
+            }
+            ("event_msg", "user_message") => {
+                // A reply to an async card is delivered as a user message, not as another
+                // output for the already-acknowledged tool call.
+                t.async_questions.clear();
             }
             ("event_msg", "error") => {
                 let code = p
@@ -335,7 +372,7 @@ pub fn parse_rollout_tail(raw: &str) -> RolloutTail {
                     .to_string();
                 let escalated = asks_to_escalate(args);
                 let prompt = match name.as_str() {
-                    "request_user_input" => string_field(args, "question"),
+                    "request_user_input" | "request_user_input_async" => question_prompt(args),
                     "request_permissions" => string_field(args, "reason"),
                     _ if escalated => string_field(args, "justification"),
                     _ => None,
@@ -363,6 +400,13 @@ pub fn parse_rollout_tail(raw: &str) -> RolloutTail {
                     continue;
                 };
                 let call = t.pending.remove(i);
+                if call.name == "request_user_input_async"
+                    && p.get("output").is_some_and(async_question_accepted)
+                {
+                    t.async_questions.retain(|c| c.call_id != call.call_id);
+                    t.async_questions.push(call);
+                    continue;
+                }
                 let still_running = p
                     .get("output")
                     .map(|o| match o {
@@ -492,6 +536,14 @@ pub fn observe_thread(
             };
             if let Some(c) = t.pending.iter().find(|c| c.name == "request_user_input") {
                 return asks(c, "Asked a question", Confidence::Medium);
+            }
+            if let Some(c) = t
+                .pending
+                .iter()
+                .chain(t.async_questions.iter())
+                .find(|c| c.name == "request_user_input_async")
+            {
+                return asks(c, "Asked a question", Confidence::Low);
             }
             if let Some(c) = t.pending.iter().find(|c| c.name == "request_permissions") {
                 return asks(c, "Permission requested", Confidence::Medium);
@@ -1119,6 +1171,62 @@ mod tests {
                 Some("Asked a question"),
                 Some("Which test framework?")
             )
+        );
+    }
+
+    #[test]
+    fn async_question_ack_is_not_an_answer() {
+        let args = json!({"questions":[{"title":"Which name?","options":["Summary","Overview"]}]})
+            .to_string();
+        let asked = started("2026-09-24T11:58:00.000Z")
+            + &call(
+                "2026-09-24T11:58:01.000Z",
+                "q1",
+                "request_user_input_async",
+                &args,
+            );
+        let pending = observe(&asked, Some("on-request"));
+        assert_eq!(
+            (
+                pending.state,
+                pending.reason.as_deref(),
+                pending.detail.as_deref()
+            ),
+            (
+                RuntimeState::NeedsInput,
+                Some("Asked a question"),
+                Some("Which name?")
+            )
+        );
+
+        // Codex acknowledges displaying the card immediately. The human has not replied.
+        let acknowledged =
+            asked + &output("2026-09-24T11:58:02.000Z", "q1", r#"{"accepted":true}"#);
+        assert_eq!(
+            observe(&acknowledged, Some("on-request")).state,
+            RuntimeState::NeedsInput
+        );
+
+        // The answer comes back as a new user message. A completed turn also dismisses the card.
+        let answered = acknowledged.clone()
+            + &line(
+                "2026-09-24T11:58:10.000Z",
+                "event_msg",
+                json!({"type":"user_message","message":"Summary"}),
+            );
+        assert_eq!(
+            observe(&answered, Some("on-request")).state,
+            RuntimeState::Working
+        );
+        let completed = acknowledged
+            + &line(
+                "2026-09-24T11:58:10.000Z",
+                "event_msg",
+                json!({"type":"task_complete"}),
+            );
+        assert_eq!(
+            observe(&completed, Some("on-request")).state,
+            RuntimeState::Ready
         );
     }
 

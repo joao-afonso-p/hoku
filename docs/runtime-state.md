@@ -77,12 +77,15 @@ Code build doesn't publish `waiting`. Any other pending tool on a busy session s
 
 Codex doesn't write approval requests (`exec_approval_request`,
 `apply_patch_approval_request`, `request_permissions`, `request_user_input` events) to the
-rollout. The only trace is a call that has no output yet, so Hoku infers the request from the
-call:
+rollout. Hoku infers them from calls that have no output yet. An asynchronous question is
+different: `request_user_input_async` immediately returns `{"accepted":true}` when Codex
+displays the card. That acknowledgement is not the user's answer, so Hoku keeps the question
+pending until a user message or the turn ends.
 
 | Pending call | State | Confidence |
 |---|---|---|
 | `request_user_input` | Needs You · Asked a question (at once) | medium |
+| `request_user_input_async`, including after its immediate accepted acknowledgement while the turn remains active | Needs You · Asked a question | low |
 | `request_permissions` | Needs You · Permission requested (at once) | medium |
 | `sandbox_permissions: "require_escalated"` or `"with_additional_permissions"` (older builds: `with_escalated_permissions: true`), as JSON arguments or in code-mode JavaScript, unanswered for 4 s on a quiet rollout | Needs You · Waiting for approval | medium |
 | Any command (`exec_command`, `shell`, `shell_command`, code-mode `exec`) or an `apply_patch` under the `untrusted` policy, unanswered for 4 s | Needs You · Waiting for approval | low |
@@ -95,6 +98,10 @@ Nothing prompts under the `never` policy. The policy comes from the rollout's la
 
 A plain `untrusted` or escalated `apply_patch` carries no detail — the patch body, diff and
 file contents never reach the index.
+
+An async question card can disappear when Codex finishes the turn. Hoku clears the alert on
+`task_complete` or `turn_aborted`; it does not claim that the card remains answerable after
+Codex closes it.
 
 A failed turn (an `error` event, or a `task_complete`/`turn_complete` carrying an `error` or
 `codex_error_info`) is classified by a text heuristic over the message and the structured
